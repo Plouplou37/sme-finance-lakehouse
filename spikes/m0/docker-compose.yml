@@ -1,0 +1,130 @@
+# M0 feasibility spike: Floci alone, plus throwaway client containers on the same network.
+name: m0-spike
+
+services:
+  floci:
+    image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+    container_name: floci
+    ports:
+      - "4566:4566"              # host access for debugging; containers use http://floci:4566
+    environment:
+      FLOCI_HOSTNAME: floci      # hostname Floci writes in the URLs it returns, reachable from other containers
+      FLOCI_STORAGE_MODE: persistent # write to disk before acknowledging; hybrid lost data on docker kill (M0 test)
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+      # MSK is NOT used: M0 showed the broker container disappears when Floci restarts. See the redpanda service.
+      # Athena runs its queries in floci-duck. We run it ourselves (service below) instead of letting Floci start it,
+      # so Floci only needs its address. Without this variable, Floci would start its own unpinned, uncapped copy.
+      FLOCI_SERVICES_DUCK_URL: http://floci-duck:3000
+    depends_on:
+      - floci-duck
+    volumes:
+      - floci-data:/app/data     # named volume: lives inside the WSL2 VM, not synced by OneDrive
+      # No Docker socket: Floci starts no containers (MSK unused, Athena uses the floci-duck service).
+      # The socket would give Floci full control of the Docker engine (root-equivalent).
+    mem_limit: 1g                # hard cap; we will measure real usage with docker stats
+
+  floci-duck:
+    # Athena's query engine: DuckDB behind a small HTTP API (port 3000, GET /health). Floci sends it each query
+    # wrapped in COPY (...) TO 's3://...csv'. Stateless: every request opens a fresh in-memory DuckDB.
+    # Pinned to 0.3.0: the latest release when Floci 2.4.0 shipped (2026-10-31), and older than 14 days.
+    image: floci/floci-duck:0.3.0@sha256:7d9a084d83ddace3bd760db574ee1bf25012a90503099c83e97b691d738e2360
+    container_name: floci-duck
+    environment:
+      # Same values Floci passed to its own copy (seen with docker inspect): fake credentials, accepted by Floci.
+      FLOCI_DUCK_S3_ACCESS_KEY: test
+      FLOCI_DUCK_S3_SECRET_KEY: test
+      FLOCI_DUCK_S3_REGION: us-east-1
+      # floci-duck downloads DuckDB's httpfs extension at startup; keep it in a volume so it is downloaded only once.
+      FLOCI_DUCK_EXT_DIR: /extensions
+    volumes:
+      - floci-duck-ext:/extensions
+    mem_limit: 512m
+    # No healthcheck: the image is distroless (no shell, no curl), so Docker cannot probe /health from inside.
+
+  awscli:
+    image: amazon/aws-cli:2.38.5@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1
+    profiles: ["tools"]          # never started by "up", only by "run"
+    environment:
+      AWS_ACCESS_KEY_ID: test    # fake credentials: any non-empty value works with Floci
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://floci:4566   # send every AWS call to Floci instead of real AWS
+      AWS_CONFIG_FILE: /aws/config
+      AWS_PAGER: ""              # print output directly instead of opening the "less" pager
+    volumes:
+      - ./aws-config:/aws/config:ro
+      - ./samples:/samples:ro
+    depends_on:
+      - floci
+
+  duckdb:
+    build: ./duckdb              # image built from spikes/m0/duckdb/Dockerfile
+    profiles: ["tools"]
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      S3_ENDPOINT: floci:4566    # host:port only, read by the test script
+    volumes:
+      - ./duckdb:/work:ro        # the test script, mounted read-only
+    command: ["python", "test_duckdb_s3.py"]
+    mem_limit: 512m
+    depends_on:
+      - floci
+
+  spark:
+    # M0 test 7: a PySpark job in local mode (driver + 2 task threads in one JVM) reading/writing s3a://sme-lake.
+    build: ./spark               # apache/spark 4.2.0 + hadoop-aws / AWS SDK jars, see spark/Dockerfile
+    profiles: ["tools"]
+    environment:
+      AWS_ACCESS_KEY_ID: test    # read by s3a's default credential chain; fake values accepted by Floci
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - ./spark/jobs:/jobs:ro    # PySpark scripts for the M0 test
+    command: ["/opt/spark/bin/spark-submit", "/jobs/test_spark_s3.py"]
+    mem_limit: 1536m             # driver heap (1g) + JVM overhead + Python process
+    depends_on:
+      - floci
+
+  redpanda:
+    # Plan B for Kafka: a single Redpanda broker managed by Compose (stable name, own volume, memory cap).
+    # Based on Redpanda's single-broker Docker Compose lab.
+    image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce
+    container_name: redpanda
+    command:
+      - redpanda
+      - start
+      # internal listener for containers (redpanda:9092), external listener for the Windows host (localhost:19092)
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      # dev-container: presets for local development. It trades durability for speed
+      # (fsync bypassed, write caching on) and auto-creates topics: fine for M0, revisited in M3.
+      - --mode dev-container
+      - --smp 1                  # use a single CPU core
+      - --default-log-level=info
+    ports:
+      - "19092:19092"            # Kafka API from the host
+      - "18081:18081"            # Schema Registry from the host (used in M3)
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  rpk:
+    # Same pinned image as the broker, used only as a Kafka client (rpk = Redpanda's Kafka CLI).
+    image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce
+    profiles: ["tools"]
+    entrypoint: ["rpk"]
+    mem_limit: 256m
+    depends_on:
+      - redpanda
+
+volumes:
+  floci-data:
+  redpanda-data:
+  floci-duck-ext:

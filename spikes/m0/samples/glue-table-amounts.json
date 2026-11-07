@@ -1,0 +1,19 @@
+{
+  "Name": "amounts",
+  "TableType": "EXTERNAL_TABLE",
+  "Parameters": {
+    "classification": "parquet"
+  },
+  "StorageDescriptor": {
+    "Columns": [
+      { "Name": "id", "Type": "bigint" },
+      { "Name": "amount", "Type": "decimal(12,2)" }
+    ],
+    "Location": "s3://sme-lake/m0/duckdb/",
+    "InputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat",
+    "OutputFormat": "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat",
+    "SerdeInfo": {
+      "SerializationLibrary": "org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe"
+    }
+  }
+}

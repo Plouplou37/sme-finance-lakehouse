@@ -1,0 +1,39 @@
+# Versions
+
+Every version here was tested together in M0 (see `docs/adr/0001-floci.md`).
+
+Rules:
+- **Never `latest`.** Images are pinned by tag **and** digest: the tag is for humans, the digest guarantees the exact same image even if the tag is re-published.
+- **At least 14 days old** when chosen, unless a test or a known bug justifies an exception (noted below).
+- **Downloaded jars are checked** against the SHA-1 published by Maven Central.
+- Upgrades are deliberate: change one line, re-run the matching M0 test, update this file.
+
+Checked on 2026-11-07.
+
+## Containers
+
+| Component | Version (tag@digest) | Why this version |
+|---|---|---|
+| Floci (AWS emulator) | `floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c` | Latest release; fixes bugs of 2.3.0. Chosen although under 14 days old, and validated by the M0 tests. Fallback: 2.3.0 |
+| floci-duck (Athena engine) | `floci/floci-duck:0.3.0@sha256:7d9a084d83ddace3bd760db574ee1bf25012a90503099c83e97b691d738e2360` | Latest release when Floci 2.4.0 shipped (2026-10-31); 0.4.x was under 14 days old and only adds BigQuery helpers |
+| Redpanda (Kafka API) | `redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce` | Replaces Floci's MSK, whose broker disappears when Floci restarts |
+| AWS CLI (test client) | `amazon/aws-cli:2.38.5@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1` | Latest release at least 14 days old |
+| Python base (DuckDB image) | `python:3.12.15-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704` | Python 3.12 line |
+| Spark | `apache/spark:4.2.0-scala2.13-java17-python3-ubuntu@sha256:84a4eedb1abcf36a90808d5a1310e3e910b78c85d85aaa1599e31af5f862ed59` | Newest Spark release at least 14 days old (2026-07-14); Java 17 is Spark's default build target. Fallback: 4.1.3 |
+
+## Libraries
+
+| Library | Version | Why this version |
+|---|---|---|
+| DuckDB (Python) | `duckdb==1.5.6` | Last 1.5 release; dbt-duckdb only tests DuckDB 2.0 as a pre-release |
+| Hadoop (inside Spark) | 3.5.0 | Bundled by Spark 4.2.0: not chosen, imposed |
+| hadoop-aws (s3a connector) | `org.apache.hadoop:hadoop-aws:3.5.0` — SHA-1 `9e594525d264c0db653c7f68da98b245f7d61ea5` | Must equal the Hadoop version exactly |
+| AWS SDK v2 | `software.amazon.awssdk:bundle:2.35.4` — SHA-1 `7252265e3970b214708e68a8b74a8fa8c875af1e` | Required by hadoop-aws 3.5.0; includes the fix for third-party S3 stores (HADOOP-19490 / HADOOP-19654) |
+| S3 analytics accelerator | `software.amazon.s3.analyticsaccelerator:analyticsaccelerator-s3:1.3.1` — SHA-1 `6c9bd0f6c440c9a78e82d272f5f0252d942419f6` | Compile dependency of hadoop-aws 3.5.0. Its stream is disabled (`fs.s3a.input.stream.type=classic`) because of an open memory leak (HADOOP-20058) |
+
+## Planned (not installed yet)
+
+| Library | Version | Module |
+|---|---|---|
+| Spark Kafka connector | `org.apache.spark:spark-sql-kafka-0-10_2.13:4.2.0` (brings `kafka-clients` 3.9.2) | M4 |
+| dbt-duckdb | to pin in M5 (1.11.1 was the latest on 2026-10-26) | M5 |

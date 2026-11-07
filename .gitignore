@@ -1,0 +1,20 @@
+# Secrets: the real .env stays on this machine. .env.example (fake values) is committed.
+.env
+
+# Python: virtual environment and bytecode cache
+.venv/
+__pycache__/
+
+# Data never goes into Git: it lives in S3 (Floci) and in Docker volumes
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+
+# Editor and Windows files
+.vscode/
+Thumbs.db
+desktop.ini
+
+# Claude Code: personal, machine-local settings
+.claude/settings.local.json
