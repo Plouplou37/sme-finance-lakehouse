@@ -4,7 +4,7 @@ Shares are probabilities between 0 and 1. Ranges are (min, max), both included.
 A dict of ranges gives each range a share: a range is drawn first, then a number inside it.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -17,11 +17,17 @@ class Config:
     days: int
     companies: int
     start_date: date
+    anomaly_rates: dict[str, float] = field(default_factory=lambda: dict(ANOMALY_RATES))
 
     @property
     def end_date(self) -> date:
         """First day after the simulated period: nothing that happens from this day on is written."""
         return self.start_date + timedelta(days=self.days)
+
+    @property
+    def schema_v2_start(self) -> date:
+        """Day the application starts sending payment_received in version 2: the middle of the period."""
+        return self.start_date + timedelta(days=self.days // 2)
 
 
 # --- Volume ---
@@ -56,3 +62,13 @@ REFUNDED_SHARE = 0.01  # every payment refunded, then the invoice is cancelled (
 # --- When the payment arrives ---
 ON_TIME_DAYS_BEFORE_DUE = {(0, 7): 0.70, (8, 30): 0.30}  # mostly in the last days before the due date
 LATE_DAYS_AFTER_DUE = {(1, 15): 0.75, (16, 60): 0.25}  # mostly less than 15 days late
+
+# --- Anomalies: share of the targeted events, each one configurable from the command line ---
+ANOMALY_RATES = {
+    "duplicate": 0.02,  # any event, sent a second time with the same event_id
+    "late_arrival": 0.02,  # any event, reaching Kafka 1 hour to 3 days after its event_time
+    "non_positive_amount": 0.005,  # invoices and payments with an amount of zero or below
+    "unknown_currency": 0.005,  # invoices and payments in a currency other than EUR
+    "unknown_reference": 0.005,  # invoices of an unknown customer, payments of an unknown invoice
+    "overpayment": 0.005,  # fully paid invoices that receive one more payment
+}

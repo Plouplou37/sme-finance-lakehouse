@@ -35,6 +35,7 @@ def build_manifest(records: list[Record], cfg: Config) -> dict:
     """
     by_topic = Counter(record.topic for record in records)
     by_event_type = Counter(record.event["event_type"] for record in records)
+    by_schema_version = Counter(str(record.event["schema_version"]) for record in records)
     by_anomaly = Counter(record.anomaly for record in records if record.anomaly)
     return {
         "parameters": {
@@ -43,11 +44,14 @@ def build_manifest(records: list[Record], cfg: Config) -> dict:
             "companies": cfg.companies,
             "start_date": cfg.start_date.isoformat(),
             "end_date": cfg.end_date.isoformat(),
+            "schema_v2_start": cfg.schema_v2_start.isoformat(),
+            "anomaly_rates": cfg.anomaly_rates,
         },
         "events": {
             "total": len(records),
             "by_topic": {topic: by_topic[topic] for topic in TOPICS},
             "by_event_type": dict(sorted(by_event_type.items())),
+            "by_schema_version": dict(sorted(by_schema_version.items())),
         },
         "anomalies": {
             "total": sum(by_anomaly.values()),
