@@ -42,7 +42,7 @@ def inject(records: list[Record], cfg: Config, rng: Random) -> list[Record]:
     records = records + _orphan_payments(records, rates, rng, fake_ids)
     records = records + _overpayments(records, rates, rng, fake_ids)
     _switch_payments_to_v2(records, cfg, rng)
-    _delay_arrivals(records, rates, rng)
+    _delay_arrivals(records, cfg, rng)
     return records + _duplicates(records, rates, rng)
 
 
@@ -165,12 +165,19 @@ def _switch_payments_to_v2(records: list[Record], cfg: Config, rng: Random) -> N
             event["payment_method"] = rng.choice(PAYMENT_METHODS)
 
 
-def _delay_arrivals(records: list[Record], rates: dict[str, float], rng: Random) -> None:
-    """Events that reach Kafka 1 hour to 3 days after they happened. Their event_time does not change."""
+def _delay_arrivals(records: list[Record], cfg: Config, rng: Random) -> None:
+    """Events that reach Kafka 1 hour to 3 days after they happened. Their event_time does not change.
+
+    A delay that would push an event past the end of the period is not applied: the event would be
+    dropped, while its payments, already arrived, would point to an invoice missing from the files.
+    """
+    end = datetime.combine(cfg.end_date, time.min, tzinfo=timezone.utc)
     for record in records:
-        if record.anomaly is None and rng.random() < rates["late_arrival"]:
-            record.arrival_time += timedelta(seconds=rng.randint(3600, 3 * 86400))
-            record.anomaly = "late_arrival"
+        if record.anomaly is None and rng.random() < cfg.anomaly_rates["late_arrival"]:
+            delayed = record.arrival_time + timedelta(seconds=rng.randint(3600, 3 * 86400))
+            if delayed < end:
+                record.arrival_time = delayed
+                record.anomaly = "late_arrival"
 
 
 def _duplicates(records: list[Record], rates: dict[str, float], rng: Random) -> list[Record]:
