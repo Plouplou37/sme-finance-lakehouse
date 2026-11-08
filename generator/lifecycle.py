@@ -48,6 +48,18 @@ def draw_amount_excl_vat(rng: Random) -> Decimal:
     return Decimal(rng.randint(low * 100, high * 100)) / 100
 
 
+def split_amount(rng: Random, total: Decimal, parts: int) -> list[Decimal]:
+    """Split `total` into `parts` amounts that add up exactly to it (computed in whole cents)."""
+    remaining = int(total * 100)
+    amounts = []
+    for _ in range(parts - 1):
+        cents = remaining * rng.randint(30, 60) // 100  # each earlier payment: 30 to 60 % of what is left
+        amounts.append(Decimal(cents) / 100)
+        remaining -= cents
+    amounts.append(Decimal(remaining) / 100)  # the last payment settles the rest, to the cent
+    return amounts
+
+
 def moment_on(rng: Random, day: date, first_hour: int = 7, last_hour: int = 17) -> datetime:
     """A random time on `day`, during business hours, in UTC."""
     clock = time(rng.randint(first_hour, last_hour), rng.randint(0, 59), rng.randint(0, 59))
@@ -91,47 +103,133 @@ def fake_identity(rng: Random, customer_type: str, customer_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# To write (Quentin), one TODO at a time
+# Lifecycle (TODO 1 to 3)
 # ---------------------------------------------------------------------------
 
 
 def create_customers(rng: Random, ids: Ids, company_id: str) -> list[Customer]:
-    """TODO 1: create the customers of one company.
+    """Create the customers of one company (TODO 1, done).
 
-    - How many: a whole number in config.CUSTOMERS_PER_COMPANY (rng.randint).
-    - For each customer:
-        customer_id          ids.next("cus", 4)
-        customer_type        pick(rng, config.CUSTOMER_TYPES)
-        payer_profile        drawn with the customer shares of config.PAYER_PROFILES
-                             (each value is a pair: share of customers, share of late invoices)
-        payment_terms_days   one of config.PAYMENT_TERMS_DAYS (rng.choice)
-        name, email, phone   fake_identity(rng, customer_type, customer_id)
-        and address          returns a dict: Customer(..., **identity) unpacks it into keyword arguments
+    - How many: a whole number in config.CUSTOMERS_PER_COMPANY.
+    - Each customer gets a type, a payer profile, payment terms and a fictional identity.
     """
-    return []
+    # pick() needs {profile: share of customers}. The second value of each pair (share of late
+    # invoices) is used later, when an invoice is paid.
+    profile_shares = {profile: share for profile, (share, _late_share) in config.PAYER_PROFILES.items()}
+
+    customers = []
+    for _ in range(rng.randint(*config.CUSTOMERS_PER_COMPANY)):
+        customer_id = ids.next("cus", 4)
+        customer_type = pick(rng, config.CUSTOMER_TYPES)
+        identity = fake_identity(rng, customer_type, customer_id)  # needs the type and the ID drawn above
+        customers.append(
+            Customer(
+                customer_id=customer_id,
+                company_id=company_id,
+                customer_type=customer_type,
+                payment_terms_days=rng.choice(config.PAYMENT_TERMS_DAYS),
+                payer_profile=pick(rng, profile_shares),
+                **identity,  # name, email, phone, street, postal_code, city, country
+            )
+        )
+    return customers
 
 
 def simulate_invoice(rng: Random, ids: Ids, customer: Customer, issue_day: date) -> list[Record]:
-    """TODO 2: simulate the whole life of one invoice and return its events, in order.
+    """Simulate the whole life of one invoice and return its events, in order (TODO 2).
 
-    Follow the state machine validated in M2:
-    1. Create the Invoice (ids.next("inv"), amount, VAT rate, due date from the customer's terms)
-       and its invoice_issued event.
-    2. Sometimes (config.UPDATED_SHARE), push the due date back before any payment: invoice_updated.
-    3. Decide the outcome: cancelled before any payment, never paid, or paid.
-    4. If paid: on time or late (the customer's payer profile), in 1 payment or in 2 or 3.
-    5. Sometimes (config.REFUNDED_SHARE), refund every payment, then cancel the invoice.
+    State machine validated in M2: issued, sometimes updated, then cancelled before any payment,
+    never paid, or paid (on time or late, in 1 to 3 payments), and rarely refunded then cancelled.
     Events can fall after the end of the period: main() drops them, as they have not happened yet.
     """
-    return []
+
+    # 2a: the invoice and its invoice_issued event
+    invoice = Invoice(
+        invoice_id=ids.next("inv"),
+        company_id=customer.company_id,
+        customer_id=customer.customer_id,
+        issue_date=issue_day,
+        due_date=issue_day + timedelta(days=customer.payment_terms_days),
+        amount_excl_vat=draw_amount_excl_vat(rng),
+        vat_rate=pick(rng, config.VAT_RATES),
+    )
+    records = [events.invoice_issued(rng, moment_on(rng, issue_day), invoice)]
+    last_day = issue_day  # day of the latest event so far: the next ones come after it
+
+    # 2b: sometimes the due date is pushed back a few days after issue, before any payment.
+    # The invoice_issued event above keeps the old due date: events.py copied the values.
+    if rng.random() < config.UPDATED_SHARE:
+        updated_day = issue_day + timedelta(days=rng.randint(1, 10))
+        invoice.due_date += timedelta(days=rng.choice(config.DUE_DATE_EXTENSIONS_DAYS))
+        records.append(events.invoice_updated(rng, moment_on(rng, updated_day), invoice))
+        last_day = updated_day
+
+    # 2c: the outcome. Cancelled and never paid end the life of the invoice here.
+    outcome = pick(
+        rng,
+        {
+            "cancelled": config.CANCELLED_SHARE,
+            "unpaid": config.UNPAID_SHARE,
+            "paid": 1 - config.CANCELLED_SHARE - config.UNPAID_SHARE,
+        },
+    )
+    if outcome == "cancelled":
+        cancel_day = last_day + timedelta(days=rng.randint(1, 15))
+        reason = rng.choice(events.CANCELLATION_REASONS)
+        records.append(events.invoice_cancelled(rng, moment_on(rng, cancel_day), invoice, reason))
+        return records
+    if outcome == "unpaid":
+        return records  # no event: the invoice simply stays unpaid
+
+    # Paid: the payer profile decides whether the invoice is settled after its due date.
+    # settle_day is the day of the last payment, when the payments add up to the amount incl. VAT.
+    late_share = config.PAYER_PROFILES[customer.payer_profile][1]
+    if rng.random() < late_share:
+        settle_day = invoice.due_date + timedelta(days=draw_in_ranges(rng, config.LATE_DAYS_AFTER_DUE))
+    else:
+        settle_day = invoice.due_date - timedelta(days=draw_in_ranges(rng, config.ON_TIME_DAYS_BEFORE_DUE))
+    first_possible_day = last_day + timedelta(days=1)
+    settle_day = max(settle_day, first_possible_day)  # never paid before the invoice exists
+
+    # 2d: 1 payment, or 2 or 3 on different days; the last one always falls on settle_day.
+    payment_count = rng.randint(2, 3) if rng.random() < config.SPLIT_PAYMENT_SHARE else 1
+    spare_days = (settle_day - first_possible_day).days  # free days before settle_day
+    payment_count = min(payment_count, spare_days + 1)  # not enough days: fewer payments
+    earlier_offsets = sorted(rng.sample(range(spare_days), payment_count - 1))
+    payment_days = [first_possible_day + timedelta(days=offset) for offset in earlier_offsets]
+    payment_days.append(settle_day)
+    amounts = split_amount(rng, invoice.amount_incl_vat, payment_count)
+
+    payments = []  # (payment_id, amount), kept in case of a refund
+    for day, amount in zip(payment_days, amounts, strict=True):
+        payment_id = ids.next("pay")
+        records.append(events.payment_received(rng, moment_on(rng, day), payment_id, invoice, day, amount))
+        payments.append((payment_id, amount))
+
+    # 2e: rarely, every payment is refunded, then the invoice is cancelled at the customer's request.
+    if rng.random() < config.REFUNDED_SHARE:
+        refund_day = settle_day + timedelta(days=rng.randint(5, 30))
+        for payment_id, amount in payments:
+            refund_id = ids.next("ref")
+            moment = moment_on(rng, refund_day)
+            records.append(events.payment_refunded(rng, moment, refund_id, payment_id, invoice, refund_day, amount))
+        cancel_day = refund_day + timedelta(days=1)
+        records.append(events.invoice_cancelled(rng, moment_on(rng, cancel_day), invoice, "customer_request"))
+
+    return records
 
 
 def simulate_address_change(rng: Random, customer: Customer, cfg: config.Config) -> list[Record]:
-    """TODO 3: with config.ADDRESS_CHANGE_SHARE, move the customer once during the period.
+    """Sometimes (config.ADDRESS_CHANGE_SHARE), move the customer once during the period (TODO 3).
 
-    New address: fake_address(rng). Return one customer_updated event carrying the full, new state.
+    Return one customer_updated event carrying the full, new state (feeds the SCD2 of M6).
     """
-    return []
+    if rng.random() >= config.ADDRESS_CHANGE_SHARE:
+        return []
+    move_day = cfg.start_date + timedelta(days=rng.randint(1, cfg.days))  # after the customer was created
+    for field, value in fake_address(rng).items():
+        setattr(customer, field, value)  # street, postal_code, city, country
+    return [events.customer_updated(rng, moment_on(rng, move_day), customer)]
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +249,7 @@ def simulate(cfg: config.Config, rng: Random) -> list[Record]:
             moment = moment_on(rng, cfg.start_date, first_hour=6, last_hour=6)
             records.append(events.customer_created(rng, moment, customer))
         if not customers:
-            continue  # nothing to invoice until TODO 1 is written
+            continue  # rng.choice() below needs at least one customer
 
         for offset in range(cfg.days):
             day = cfg.start_date + timedelta(days=offset)
