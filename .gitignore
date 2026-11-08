@@ -18,3 +18,6 @@ desktop.ini
 
 # Claude Code: personal, machine-local settings
 .claude/settings.local.json
+
+# Personal notes, kept on this machine only (never published)
+private/
