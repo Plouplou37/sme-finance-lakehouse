@@ -1,0 +1,98 @@
+# Local data platform: Floci emulates S3, Glue and Athena; Redpanda serves the Kafka API.
+# Start with `make up`. Fake credentials come from .env, a copy of .env.example (see README).
+name: sme-lake
+
+services:
+  floci:
+    image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
+    ports:
+      - "4566:4566"                 # host tools use http://localhost:4566; containers use http://floci:4566
+    environment:
+      FLOCI_HOSTNAME: floci         # host name Floci writes in the URLs it returns, reachable from other containers
+      FLOCI_STORAGE_MODE: persistent  # write to disk before acknowledging; hybrid lost data on docker kill (ADR 0001)
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+      # Athena runs its queries in the floci-duck service below. Without this variable,
+      # Floci would start its own unpinned, uncapped copy (which needs the Docker socket).
+      FLOCI_SERVICES_DUCK_URL: http://floci-duck:3000
+    volumes:
+      - floci-data:/app/data        # named volume: lives inside Docker's WSL2 VM
+      # No Docker socket: Floci starts no containers (MSK replaced by Redpanda, Athena uses floci-duck).
+      # The socket would give Floci full control of the Docker engine (root-equivalent).
+    depends_on:
+      - floci-duck
+    mem_limit: 1g
+
+  floci-duck:
+    # Athena's query engine: DuckDB behind a small HTTP API (port 3000). Stateless.
+    # Distroless image (no shell, no curl): Docker cannot run a healthcheck inside it.
+    image: floci/floci-duck:0.3.0@sha256:7d9a084d83ddace3bd760db574ee1bf25012a90503099c83e97b691d738e2360
+    environment:
+      FLOCI_DUCK_S3_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:?copy .env.example to .env}
+      FLOCI_DUCK_S3_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:?copy .env.example to .env}
+      FLOCI_DUCK_S3_REGION: ${AWS_DEFAULT_REGION:?copy .env.example to .env}
+      # floci-duck downloads DuckDB's httpfs extension at startup; keep it in a volume so it is downloaded only once.
+      FLOCI_DUCK_EXT_DIR: /extensions
+    volumes:
+      - floci-duck-ext:/extensions
+    mem_limit: 512m
+
+  redpanda:
+    # Kafka API. Replaces Floci's MSK, whose broker disappeared when Floci restarted (M0, ADR 0001).
+    # Based on Redpanda's single-broker Docker Compose lab.
+    image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce
+    command:
+      - redpanda
+      - start
+      # internal listener for containers (redpanda:9092), external listener for the Windows host (localhost:19092)
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+      # dev-container: presets for local development. It trades durability for speed
+      # (fsync bypassed, write caching on) and auto-creates topics. Revisited in M3.
+      - --mode dev-container
+      - --smp 1                     # use a single CPU core
+      - --default-log-level=info
+    ports:
+      - "19092:19092"               # Kafka API from the host
+      - "18081:18081"               # Schema Registry from the host (used in M3)
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # --- Tools: in the "tools" profile, so `up` never starts them. Use `docker compose run --rm <tool> ...` ---
+
+  awscli:
+    image: amazon/aws-cli:2.38.5@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1
+    profiles: ["tools"]
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?copy .env.example to .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?copy .env.example to .env}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:?copy .env.example to .env}
+      AWS_ENDPOINT_URL: http://floci:4566   # inside the Docker network (the localhost value in .env is for the host)
+      AWS_CONFIG_FILE: /aws/config
+      AWS_PAGER: ""                 # print output directly instead of opening the "less" pager
+    volumes:
+      - ./config/aws-config:/aws/config:ro
+    depends_on:
+      - floci
+
+  rpk:
+    # Same pinned image as the broker, used only as a Kafka client (rpk = Redpanda's Kafka CLI).
+    image: redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce
+    profiles: ["tools"]
+    entrypoint: ["rpk"]
+    mem_limit: 256m
+    depends_on:
+      - redpanda
+
+volumes:
+  floci-data:
+  floci-duck-ext:
+  redpanda-data:

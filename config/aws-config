@@ -1,0 +1,6 @@
+# Shared AWS CLI and boto3 settings (the region comes from AWS_DEFAULT_REGION in .env).
+# Floci serves S3 under a single host name, so the bucket name must go in the path
+# (http://floci:4566/sme-lake/key), not in the host name (sme-lake.floci would not resolve).
+[default]
+s3 =
+  addressing_style = path
