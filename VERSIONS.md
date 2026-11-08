@@ -31,6 +31,30 @@ Checked on 2026-11-07.
 | AWS SDK v2 | `software.amazon.awssdk:bundle:2.35.4` — SHA-1 `7252265e3970b214708e68a8b74a8fa8c875af1e` | Required by hadoop-aws 3.5.0; includes the fix for third-party S3 stores (HADOOP-19490 / HADOOP-19654) |
 | S3 analytics accelerator | `software.amazon.s3.analyticsaccelerator:analyticsaccelerator-s3:1.3.1` — SHA-1 `6c9bd0f6c440c9a78e82d272f5f0252d942419f6` | Compile dependency of hadoop-aws 3.5.0. Its stream is disabled (`fs.s3a.input.stream.type=classic`) because of an open memory leak (HADOOP-20058) |
 
+## Host tools
+
+Installed on the machine; everything else runs in containers. Tested in M1 (2026-11-08).
+
+| Tool | Tested version | Note |
+|---|---|---|
+| Docker Desktop | Docker 28.3.0, Compose 2.38.1 | Compose v2 is required (`docker compose`, `up --wait`) |
+| GNU Make | 3.82.90 | Recipes are single commands, so they run in cmd.exe (Windows) and in sh (Linux) |
+| uv | 0.8.11 | Upgrade to 0.13.5 postponed: the GitHub API was down when we tried |
+| Git | 2.46.0 | Line endings are forced to LF by `.gitattributes` |
+| Python | 3.12 (set in `.python-version`) | Same line as the container images (3.12.15). uv uses an installed 3.12 or downloads one |
+
+## Python packages (host)
+
+| Package | Version | Why this version |
+|---|---|---|
+| boto3 | `1.43.126` (botocore `1.43.126`) | Latest release when added in M1, not checked against the 14-day rule (boto3 ships almost daily). All packages, direct and indirect, are locked with their hashes in `uv.lock` |
+
+## Not pinned
+
+| Component | Status |
+|---|---|
+| DuckDB `httpfs` extension | Downloaded by floci-duck at first start and kept in the `floci-duck-ext` volume. Signed by DuckDB, but it can receive updates: installed version not recorded yet |
+
 ## Planned (not installed yet)
 
 | Library | Version | Module |
