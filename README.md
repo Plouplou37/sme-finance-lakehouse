@@ -91,6 +91,17 @@ Check the bucket with the AWS CLI container:
 docker compose run --rm awscli s3 ls s3://sme-lake/
 ```
 
+### Generate events
+
+```sh
+uv run python -m generator --seed 42 --days 90 --companies 5   # default values
+uv run pytest                                                  # generator tests
+```
+
+The generator writes one JSON Lines file per topic and a `manifest.json` (events and anomalies
+counted by type) into `data/generated/`. Run `uv run python -m generator --help` for every option,
+including one rate per anomaly. The format is described in the [event contract](docs/event-contract.md).
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -103,7 +114,7 @@ docker compose run --rm awscli s3 ls s3://sme-lake/
 
 - [x] **M0 — Feasibility spike**: Floci emulates S3, Glue and Athena; DuckDB and Spark read and write Parquet on it; Redpanda replaces Floci's Kafka (MSK), which did not survive restarts. See [ADR 0001](docs/adr/0001-floci.md).
 - [x] **M1 — Repository foundations**: one-command environment (`make up`), idempotent bucket setup, no secrets in Git.
-- [ ] **M2 — Data generator**: reproducible invoice and payment events (`--seed`), with known anomalies and a manifest.
+- [x] **M2 — Data generator**: reproducible invoice and payment events (`--seed`), with known anomalies and a manifest. See the [event contract](docs/event-contract.md).
 - [ ] **M3 — Kafka**: three keyed topics; ordering per invoice, at-least-once delivery, replay.
 - [ ] **M4 — Spark and bronze**: Kafka to raw Parquet on S3, resumable through checkpoints.
 - [ ] **M5 — dbt silver**: typed and deduplicated data; invalid events go to quarantine with a reason.
@@ -117,5 +128,6 @@ docker compose run --rm awscli s3 ls s3://sme-lake/
 ## Documentation
 
 - [docs/adr/](docs/adr/): architecture decision records (context, decision, alternatives, consequences)
+- [docs/event-contract.md](docs/event-contract.md): the events, their fields and their format
 - [docs/journal.md](docs/journal.md): progress log, module by module
 - [VERSIONS.md](VERSIONS.md): pinned versions of the images and libraries

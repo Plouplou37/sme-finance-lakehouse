@@ -80,3 +80,47 @@
 **Status:** M1 closed on 2026-11-08.
 
 **Next:** M2, data generator.
+
+## M2: data generator (2026-11-08)
+
+**Goal:** a realistic and reproducible flow of fictional accounting events, with anomalies known in advance.
+
+**What was built**
+- Event contract (`docs/event-contract.md`): 3 topics, 7 event types and a common envelope. Amounts are decimal strings, update events carry the full state, and schema version 2 adds `payment_method` to `payment_received`.
+- Generator (`generator/`): `uv run python -m generator` with `--seed`, `--days`, `--companies`, `--start-date`, `--out` and one rate option per anomaly. It writes one JSON Lines file per topic, in arrival order, and `manifest.json`.
+- Simulation: customers with a payer profile (good, average, bad); an invoice state machine (issued, sometimes updated, then cancelled, unpaid, or paid on time or late, in 1 to 3 payments, rarely refunded); address changes, which will feed the SCD2 of M6.
+- Anomalies: duplicates, late arrivals, zero or negative amounts, unknown currencies, unknown references, overpayments, and the switch to schema version 2 in the middle of the period.
+- 13 pytest tests.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| Two runs with the same `--seed` give the same result | ✅ Identical files, byte for byte (test) |
+| The manifest matches the written events | ✅ Recounted from the files by topic, type and schema version (test) |
+| `--days`, `--companies` and anomaly rates are configurable | ✅ Tested, including all rates at 0 |
+| Each anomaly type has a pytest test | ✅ 7 anomaly tests, plus the contract rules on valid invoices: 13 passed in 0.89 s |
+
+**Measured:** default run (5 companies, 90 days): 2,578 events, 146 anomalies. 50 companies over 365 days: 116,140 events in 6.7 s.
+
+**Decisions**
+- Amounts are decimal strings, never floats: in binary, `0.1 + 0.2` is `0.30000000000000004`, and a reconciliation to the cent would fail.
+- `event_id` is a UUID created once at the source: it is the deduplication key. `invoice_id` links the events of an invoice and is its Kafka key.
+- Business dates (`issue_date`, `payment_date`) are kept apart from `event_time`: they decide the revenue month and the payment delay.
+- Update events carry the full state: each one is a ready-made version for the SCD2, even when events arrive out of order.
+- Only EUR is valid, to avoid exchange rates.
+- The generator writes files, not Kafka: it can be tested without any service, and M3 publishes the files.
+- Each customer has a payer profile, so that "which customers pay late" has a real answer to find.
+- One anomaly touches exactly one event (a broken invoice is a new invoice with no payment), so the manifest stays an exact reference for M5 and M7.
+
+**Main lessons**
+- The same seed is not enough: same seed, same code and same versions give the same result. Adding the invoices changed the number of customers from 154 to 147 with `--seed 42`.
+- `uuid4()` and `datetime.now()` break reproducibility: one random generator built from the seed, and a fixed start date.
+- The end of the period is a snapshot: payments due later are not written yet (859 payments for 1,359 invoices over 90 days). Unpaid does not mean late.
+- A test that loops over an empty list always passes: each anomaly test first checks that the anomaly was injected.
+
+**Still open:** the producer (M3) must keep the arrival order of the files; incremental loading with late events (M5); pytest's 5 dependencies were not checked against the 14-day rule (they are locked with their hashes).
+
+**Status:** M2 closed on 2026-11-08, merged through the module's pull request.
+
+**Next:** M3, Kafka.
