@@ -124,3 +124,42 @@
 **Status:** M2 closed on 2026-11-08, merged through the module's pull request.
 
 **Next:** M3, Kafka.
+
+## M3: Kafka (2026-11-09)
+
+**Goal:** publish the generator's events to Kafka, and understand what Kafka guarantees and what it does not.
+
+**What was built**
+- Topics (`scripts/init_kafka.py`, run by `make up`): 3 topics with 3 partitions each, replication factor 1, unlimited retention. Idempotent, with a final check. Automatic topic creation is disabled in Redpanda, so a misspelled topic name fails instead of silently creating a new topic.
+- Producer (`python -m producer`): each event goes to its topic with the key of the event contract (`customer_id` or `invoice_id`), unchanged. Every delivery is checked through a callback, then `flush()`, then a comparison with the manifest.
+- Verification consumer (`python -m consumer`): reads the topics back as a consumer group, commits after processing, stops cleanly on Ctrl+C, and checks counts, one partition per key, order per key and duplicate `event_id`s.
+- Python client: confluent-kafka 2.16.0, a wrapper around librdkafka.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| The three topics exist with a justified number of partitions | ✅ 3 partitions each: enough to observe ordering per key and consumer groups; few enough for the volume, a single-core broker and Spark `local[2]` in M4, where each partition becomes a task and output files |
+| The number of messages matches the manifest | ✅ 185 / 1,507 / 886 acknowledged by the broker, confirmed by the offsets (481 + 491 + 535 = 1,507 invoices) and by a full read |
+| The events of an invoice arrive in order | ✅ 2,296 keys read back in the order they were sent |
+| A stopped consumer resumes without losing messages | ✅ Stopped after 1,000 messages; restarted, the same group read the other 1,578; lag 0 |
+
+**Decisions**
+- confluent-kafka rather than kafka-python: the industry standard, with the configuration names of the Java client.
+- librdkafka defaults overridden on purpose: idempotence on (off by default), murmur2 partitioner like Java clients (CRC32 by default), and `auto.offset.reset=earliest` for the verification consumer (by default a new group starts at the end and sees nothing).
+- 3 partitions per topic: sized for throughput and parallelism, not for the number of keys.
+- The producer publishes the files topic by topic: Kafka gives no ordering across topics anyway.
+
+**Experiments and lessons**
+- Same key, same partition; an offset numbers a partition, not a key. Order holds within a partition only, and the order between partitions changes from one read to the next.
+- A group's committed offset is the next offset to read, and it is kept in `__consumer_offsets` after the consumer leaves.
+- A silent failure: writing to a misspelled topic with rpk printed neither success nor error. Hence a producer that checks every delivery.
+- A consumer killed before its commit left a lag of 78: those messages are read again on restart (at least once). A clean stop commits first.
+- The producer run twice reported `OK` both times and doubled the topics (5,156 messages, 2,519 distinct `event_id`s). Producer idempotence only covers resends within one run: duplicates are removed downstream, on `event_id` (M5).
+- A bug of ours: a synchronous commit with nothing new to commit fails (`_NO_OFFSET`).
+
+**Still open:** the durability of Redpanda's `dev-container` mode (write caching, no forced disk write) is documented but not tested; a single broker means no replication; no ordering across topics, so silver must accept a payment read before its invoice.
+
+**Status:** M3 closed on 2026-11-09, merged through the module's pull request.
+
+**Next:** M4, Spark and the bronze layer.

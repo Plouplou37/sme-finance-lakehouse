@@ -77,11 +77,11 @@ make up
 ```
 
 `make up` starts Floci, floci-duck and Redpanda, waits until they are ready, then creates the
-`sme-lake` bucket and its prefixes. It is safe to run again: it never deletes data.
+`sme-lake` bucket, its prefixes and the three Kafka topics. It is safe to run again: it never deletes data.
 
 | Command | What it does |
 |---|---|
-| `make up` | Start the platform and create the bucket and prefixes |
+| `make up` | Start the platform, create the bucket, its prefixes and the Kafka topics |
 | `make down` | Stop the containers and keep the data (Docker volumes) |
 | `make reset` | Stop the containers and **delete all data** |
 
@@ -102,6 +102,16 @@ The generator writes one JSON Lines file per topic and a `manifest.json` (events
 counted by type) into `data/generated/`. Run `uv run python -m generator --help` for every option,
 including one rate per anomaly. The format is described in the [event contract](docs/event-contract.md).
 
+### Publish events to Kafka
+
+```sh
+uv run --env-file .env python -m producer   # publish data/generated/ to the topics (once per dataset)
+uv run --env-file .env python -m consumer   # read the topics back: counts, partitions, order per key
+```
+
+The topics are created by `make up`. Running the producer twice publishes every event twice:
+duplicates are expected downstream and removed on `event_id`.
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -115,7 +125,7 @@ including one rate per anomaly. The format is described in the [event contract](
 - [x] **M0 — Feasibility spike**: Floci emulates S3, Glue and Athena; DuckDB and Spark read and write Parquet on it; Redpanda replaces Floci's Kafka (MSK), which did not survive restarts. See [ADR 0001](docs/adr/0001-floci.md).
 - [x] **M1 — Repository foundations**: one-command environment (`make up`), idempotent bucket setup, no secrets in Git.
 - [x] **M2 — Data generator**: reproducible invoice and payment events (`--seed`), with known anomalies and a manifest. See the [event contract](docs/event-contract.md).
-- [ ] **M3 — Kafka**: three keyed topics; ordering per invoice, at-least-once delivery, replay.
+- [x] **M3 — Kafka**: three keyed topics with 3 partitions each; a producer that checks every delivery; a verification consumer (counts, ordering per key, resume after a stop, duplicates).
 - [ ] **M4 — Spark and bronze**: Kafka to raw Parquet on S3, resumable through checkpoints.
 - [ ] **M5 — dbt silver**: typed and deduplicated data; invalid events go to quarantine with a reason.
 - [ ] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices and DSO (days sales outstanding).
