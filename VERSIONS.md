@@ -48,6 +48,8 @@ Installed on the machine; everything else runs in containers. Tested in M1 (2026
 | Package | Version | Why this version |
 |---|---|---|
 | boto3 | `1.43.126` (botocore `1.43.126`) | Latest release when added in M1, not checked against the 14-day rule (boto3 ships almost daily). All packages, direct and indirect, are locked with their hashes in `uv.lock` |
+| confluent-kafka | `2.16.0` | Kafka client (M3), a wrapper around librdkafka. Newest release at least 14 days old (2026-10-07; 2.16.1 was 12 days old). Ships a Windows wheel for CPython 3.12 |
+| pytest (dev only) | `9.1.1` | Tests (M2). Newest release at least 14 days old (2026-06-19; 9.2.0 was 12 days old). Its 5 dependencies were not checked against the 14-day rule |
 
 ## Not pinned
 
