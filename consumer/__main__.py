@@ -106,9 +106,17 @@ def main() -> None:
     print(f"Group {args.group}: {total} messages read")
     for topic in TOPICS:
         print(f"  {topic}: {read[topic]}")
+    event_ids = [event_id for ids in order.values() for event_id in ids]
+    copies = len(event_ids) - len(set(event_ids))
+    print(f"  distinct event_ids: {len(set(event_ids))}, extra copies of an event_id already read: {copies}")
 
     manifest = json.loads((DATA_DIR / "manifest.json").read_text(encoding="utf-8"))
-    if total != manifest["events"]["total"]:
+    if total > manifest["events"]["total"]:
+        raise SystemExit(
+            f"{total} messages for {manifest['events']['total']} events in the manifest: the topics hold extra "
+            "copies (was the producer run more than once?)"
+        )
+    if total < manifest["events"]["total"]:
         print(
             f"This run read {total} of the {manifest['events']['total']} events: counts and order are only checked "
             f"on a full read. Run again with --group {args.group} to resume where it stopped."
