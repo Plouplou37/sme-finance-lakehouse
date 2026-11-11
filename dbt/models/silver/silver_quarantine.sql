@@ -1,3 +1,5 @@
+{{ config(location='s3://sme-lake/silver/silver_quarantine.parquet') }}
+
 -- Rejected events: never deleted, kept with their reason and their raw JSON, to audit them, count them by
 -- reason (reconciliation with the generator's manifest), warn the source team, and replay them once a rule
 -- is fixed. Reasons use the anomaly names of the manifest.
