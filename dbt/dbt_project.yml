@@ -39,3 +39,7 @@ models:
       # s3://sme-lake/gold/ (location set in each model), for Glue and Athena in M9.
       +materialized: external
       +schema: gold
+    quality:
+      # Quality checks of the platform itself (M7): kept in the DuckDB warehouse, not published.
+      +materialized: table
+      +schema: quality
