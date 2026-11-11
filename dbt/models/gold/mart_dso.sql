@@ -1,0 +1,36 @@
+{{ config(location='s3://sme-lake/gold/mart_dso.parquet') }}
+
+-- Question 3: what is the average payment delay (DSO) of each company?
+-- Grain: one row per company, as of the snapshot date. Two views of the same question:
+-- - days_to_settle: measured on settled invoices, from the issue date to the settlement date
+--   (with partial payments, the date of the payment that completes the invoice), simple and
+--   weighted by amount (a large invoice paid late weighs more than a small one);
+-- - dso_90_days: the accounting formula, (receivables outstanding / revenue incl. VAT invoiced over
+--   the last 90 days) x 90. It also accounts for invoices not settled yet.
+
+with invoices as (
+
+    select * from {{ ref('fct_invoices') }}
+    where status != 'cancelled'
+
+)
+
+select
+    company_id,
+    max(as_of_date)                                                           as as_of_date,
+    count(*) filter (where status = 'paid')                                   as settled_invoices,
+    round(avg(days_to_settle), 1)                                             as avg_days_to_settle,
+    round(
+        sum(days_to_settle * amount_incl_vat) filter (where status = 'paid')
+        / sum(amount_incl_vat) filter (where status = 'paid'),
+        1
+    )                                                                         as weighted_days_to_settle,
+    sum(amount_outstanding)                                                   as receivables_outstanding,
+    sum(amount_incl_vat) filter (where issue_date > as_of_date - 90)          as invoiced_last_90_days,
+    round(
+        sum(amount_outstanding)
+        / sum(amount_incl_vat) filter (where issue_date > as_of_date - 90) * 90,
+        1
+    )                                                                         as dso_90_days
+from invoices
+group by company_id
