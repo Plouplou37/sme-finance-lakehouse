@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Raw Kafka events written by the Spark ingestion job (M4), unchanged.
+    tables:
+      - name: events
+        description: >
+          One row per Kafka message: the event as JSON text (raw_json) and its Kafka coordinates.
+          Spark wrote the files with partitionBy("topic", "ingestion_date"), so the folder names
+          topic=…/ingestion_date=… become the columns topic and ingestion_date (hive_partitioning).
+          Only *.parquet files are read: Spark's _spark_metadata log is ignored, so files left by an
+          interrupted batch would be read too. Duplicates are removed in silver, on event_id.
+        meta:
+          external_location: >-
+            read_parquet('s3://sme-lake/bronze/topic=*/ingestion_date=*/*.parquet', hive_partitioning = true)

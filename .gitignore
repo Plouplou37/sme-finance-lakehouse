@@ -11,6 +11,11 @@ data/
 *.duckdb
 *.duckdb.wal
 
+# dbt: compiled SQL, logs and installed packages are rebuilt at every run
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+
 # Editor and Windows files
 .vscode/
 Thumbs.db
