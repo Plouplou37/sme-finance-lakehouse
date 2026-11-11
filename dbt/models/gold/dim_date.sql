@@ -26,12 +26,12 @@ days as (
 )
 
 select
-    date_day                                    as date_key,
-    extract(year from date_day)                 as year,
-    extract(quarter from date_day)              as quarter,
-    extract(month from date_day)                as month,
-    strftime(date_day, '%Y-%m')                 as year_month,
-    cast(date_trunc('month', date_day) as date) as month_start,
-    extract(isodow from date_day)               as iso_day_of_week,   -- 1 = Monday ... 7 = Sunday
-    extract(isodow from date_day) in (6, 7)     as is_weekend
+    date_day                                            as date_key,
+    cast(extract(year from date_day) as integer)        as year,
+    cast(extract(quarter from date_day) as integer)     as quarter,
+    cast(extract(month from date_day) as integer)       as month,
+    strftime(date_day, '%Y-%m')                         as year_month,
+    cast(date_trunc('month', date_day) as date)         as month_start,
+    cast(extract(isodow from date_day) as integer)      as iso_day_of_week,   -- 1 = Monday ... 7 = Sunday
+    extract(isodow from date_day) in (6, 7)             as is_weekend
 from days

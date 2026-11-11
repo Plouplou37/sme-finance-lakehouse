@@ -14,3 +14,20 @@ sources:
         meta:
           external_location: >-
             read_parquet('s3://sme-lake/bronze/topic=*/ingestion_date=*/*.parquet', hive_partitioning = true)
+        config:
+          # Freshness: is bronze up to date? `dbt source freshness` compares the latest ingested_at
+          # with the current time. A warning does not stop anything; an error would.
+          loaded_at_field: ingested_at
+          freshness:
+            warn_after: {count: 1, period: day}
+            error_after: {count: 3, period: day}
+
+  - name: generator
+    description: Files written by the data generator (M2), read from the repository's data folder.
+    tables:
+      - name: manifest
+        description: >
+          The generator's manifest (data/generated/manifest.json): events and anomalies counted by type.
+          The independent truth the platform is reconciled with. Read as raw text: one row, the JSON in `content`.
+        meta:
+          external_location: "read_text('data/generated/manifest.json')"

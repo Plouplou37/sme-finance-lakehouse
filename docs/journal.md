@@ -295,3 +295,40 @@
 **Status:** M6 closed on 2026-11-11, merged through the module's pull request.
 
 **Next:** M7, quality, contracts and catalogue.
+
+## M7: quality, contracts and catalogue (2026-11-11)
+
+**Goal:** make trust in the data measurable: know that the data is right, not only that the jobs ran.
+
+**What was built**
+- Enforced model contracts on the 9 gold tables: column names and types are checked before building. The contracts forced every type to be explicit (a sum of `DECIMAL(18,2)` defaults to `DECIMAL(38,2)`).
+- Every gold column described (105), and the 5 columns holding personal data marked with `meta.contains_pii`.
+- The generator's manifest read as a dbt source, and `quality_reconciliation` (one row per check, kept in the warehouse for the M8 run report) comparing it with what the platform found.
+- Severities: `quality_matches_manifest` and `quarantine_share_error` (more than 5 % quarantined) block the run; `quarantine_share_warn` (more than 1 %) only warns.
+- Source freshness on bronze (warning after one day without ingestion, error after three).
+- `dbt docs`: the catalogue with descriptions, tests and the lineage graph from bronze to the marts.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| Gold models have an enforced contract | ✅ all 9 |
+| Detected anomalies match the manifest, type by type | ✅ total events 2,578, duplicates 59, non-positive amounts 7, unknown currencies 11, unknown references 10, overpayments 2: all `match`, as a blocking test |
+| A type change deliberately breaks a contract, then the fix is shown | ✅ `first_seen_at` cast to a date: dbt stopped with the mismatch table, the tests were skipped, and the published Parquet kept the time of the last good build |
+| Source freshness is tested | ✅ `dbt source freshness`: pass |
+| Every gold column is described, sensitive columns are marked | ✅ 105 columns, 5 marked as personal data |
+| `dbt docs` shows the full graph | ✅ lineage from `bronze.events` to the four marts |
+
+`dbt build`: 19 models and 54 tests, 72 pass and 1 warning (1.19 % of events in quarantine, above the 1 % alert threshold, below the 5 % blocking one).
+
+**Lessons**
+- A contract that holds proves nothing: it has to be broken once to show it is enforced. It is enforced even on dbt-duckdb's `external` models, before the copy to S3.
+- A contract stops accidental changes and makes deliberate ones visible: changing the SQL and the contract together still passes, so the real protection is the review of the pull request (and, in production, versions of the model and a deployment that only goes through `main`).
+- Block when publishing would give wrong numbers; warn when the numbers stay right but a signal drifts.
+- `late_arrival` cannot be checked in bronze: the producer published every file at once, so Kafka's timestamp is the publication time. The check is reported as `not_checked` rather than faked.
+
+**Still open:** a single environment (anyone with access to the machine can publish without a pull request; a separate production target for Airflow and CI would close it); model versions and breaking-change detection against the deployed state, to try in M10.
+
+**Status:** M7 closed on 2026-11-11, merged through the module's pull request.
+
+**Next:** M8, orchestration with Airflow.

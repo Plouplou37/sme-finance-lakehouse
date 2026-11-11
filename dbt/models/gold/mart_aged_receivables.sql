@@ -15,8 +15,8 @@ select
         when days_late <= 90 then '3 - 61 to 90 days late'
         else '4 - more than 90 days late'
     end                          as ageing_bucket,
-    count(*)                     as unpaid_invoices,
-    sum(amount_outstanding)      as amount_outstanding
+    cast(count(*) as integer)                           as unpaid_invoices,
+    cast(sum(amount_outstanding) as decimal(18, 2))     as amount_outstanding
 from {{ ref('fct_invoices') }}
 where status in ('open', 'partially_paid')
 group by all

@@ -122,12 +122,16 @@ select
     latest_version.amount_excl_vat,
     latest_version.vat_amount,
     latest_version.amount_incl_vat,
-    coalesce(paid.amount_paid, 0)                                          as amount_paid,
-    case
-        when cancellations.invoice_id is not null then 0
-        else latest_version.amount_incl_vat - coalesce(paid.amount_paid, 0)
-    end                                                                    as amount_outstanding,
-    coalesce(paid.payment_count, 0)                                        as payment_count,
+    -- Explicit types: the model contract (gold.yml) checks each one.
+    cast(coalesce(paid.amount_paid, 0) as decimal(18, 2))                  as amount_paid,
+    cast(
+        case
+            when cancellations.invoice_id is not null then 0
+            else latest_version.amount_incl_vat - coalesce(paid.amount_paid, 0)
+        end
+        as decimal(18, 2)
+    )                                                                      as amount_outstanding,
+    cast(coalesce(paid.payment_count, 0) as integer)                       as payment_count,
     paid.first_payment_date,
     case
         when cancellations.invoice_id is not null then 'cancelled'
@@ -135,15 +139,21 @@ select
         when coalesce(paid.amount_paid, 0) > 0 then 'partially_paid'
         else 'open'
     end                                                                    as status,
-    case
-        when cancellations.invoice_id is null and settlement.settled_date is not null
-            then settlement.settled_date - issued.issue_date
-    end                                                                    as days_to_settle,
-    case
-        when cancellations.invoice_id is not null then null
-        when settlement.settled_date is not null then greatest(settlement.settled_date - latest_version.due_date, 0)
-        else greatest(as_of.as_of_date - latest_version.due_date, 0)
-    end                                                                    as days_late,
+    cast(
+        case
+            when cancellations.invoice_id is null and settlement.settled_date is not null
+                then settlement.settled_date - issued.issue_date
+        end
+        as integer
+    )                                                                      as days_to_settle,
+    cast(
+        case
+            when cancellations.invoice_id is not null then null
+            when settlement.settled_date is not null then greatest(settlement.settled_date - latest_version.due_date, 0)
+            else greatest(as_of.as_of_date - latest_version.due_date, 0)
+        end
+        as integer
+    )                                                                      as days_late,
     as_of.as_of_date
 from issued
 inner join latest_version using (invoice_id)

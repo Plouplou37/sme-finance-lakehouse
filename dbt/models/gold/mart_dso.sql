@@ -20,20 +20,20 @@ with invoices as (
 select
     company_id,
     max(as_of_date)                                                           as as_of_date,
-    count(*) filter (where status = 'paid')                                   as settled_invoices,
-    round(avg(first_payment_date - issue_date), 1)                            as avg_days_to_first_payment,
-    round(avg(days_to_settle), 1)                                             as avg_days_to_settle,
-    round(
+    cast(count(*) filter (where status = 'paid') as integer)                  as settled_invoices,
+    cast(avg(first_payment_date - issue_date) as decimal(10, 1))              as avg_days_to_first_payment,
+    cast(avg(days_to_settle) as decimal(10, 1))                               as avg_days_to_settle,
+    cast(
         sum(days_to_settle * amount_incl_vat) filter (where status = 'paid')
-        / sum(amount_incl_vat) filter (where status = 'paid'),
-        1
+        / sum(amount_incl_vat) filter (where status = 'paid')
+        as decimal(10, 1)
     )                                                                         as weighted_days_to_settle,
-    sum(amount_outstanding)                                                   as receivables_outstanding,
-    sum(amount_incl_vat) filter (where issue_date > as_of_date - 90)          as invoiced_last_90_days,
-    round(
+    cast(sum(amount_outstanding) as decimal(18, 2))                           as receivables_outstanding,
+    cast(sum(amount_incl_vat) filter (where issue_date > as_of_date - 90) as decimal(18, 2)) as invoiced_last_90_days,
+    cast(
         sum(amount_outstanding)
-        / sum(amount_incl_vat) filter (where issue_date > as_of_date - 90) * 90,
-        1
+        / sum(amount_incl_vat) filter (where issue_date > as_of_date - 90) * 90
+        as decimal(10, 1)
     )                                                                         as dso_90_days
 from invoices
 group by company_id

@@ -50,9 +50,12 @@ select
     movements.signed_amount                     as amount,
     movements.payment_method,
     movements.schema_version,
-    case
-        when movements.movement_type = 'payment' then movements.movement_date - fct_invoices.due_date
-    end                                         as days_after_due,   -- negative = paid before the due date
+    cast(
+        case
+            when movements.movement_type = 'payment' then movements.movement_date - fct_invoices.due_date
+        end
+        as integer
+    )                                           as days_after_due,   -- negative = paid before the due date
     movements.event_id
 from movements
 inner join {{ ref('fct_invoices') }} as fct_invoices using (invoice_id)
