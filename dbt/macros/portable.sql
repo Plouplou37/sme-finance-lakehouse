@@ -19,6 +19,15 @@
 {% endmacro %}
 
 
+{#
+  Surrogate key: a hash of the given columns. Stable from one run to the next (unlike a row number,
+  which would shift when a new row is added), so facts keep pointing at the right dimension row.
+#}
+{% macro surrogate_key(columns) %}
+    md5(concat_ws('|', {% for column in columns %}cast({{ column }} as varchar){% if not loop.last %}, {% endif %}{% endfor %}))
+{% endmacro %}
+
+
 {# Conversion that returns NULL instead of failing when the value cannot be converted. #}
 {% macro safe_cast_to(expression, data_type) %}
     {{ return(adapter.dispatch('safe_cast_to')(expression, data_type)) }}

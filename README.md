@@ -45,7 +45,7 @@ whose broker did not survive restarts. See [ADR 0001](docs/adr/0001-floci.md).
 s3://sme-lake/
 ├── bronze/        raw events from Kafka, unchanged (topic=<topic>/ingestion_date=<date>/)
 ├── silver/        cleaned, typed and deduplicated data, and the quarantine (Parquet, written by dbt)
-├── gold/          star schema and marts for analysts
+├── gold/          star schema and marts for analysts (Parquet, written by dbt)
 ├── quarantine/    rejected events, with the reason
 ├── checkpoints/   Spark streaming progress
 └── bench/         benchmark data (bonus)
@@ -123,7 +123,7 @@ The first run builds the Spark image. The job reads everything that arrived sinc
 to `s3://sme-lake/bronze/topic=<topic>/ingestion_date=<date>/`, then stops. Running it again without new
 messages writes nothing: its checkpoint remembers the offsets already written.
 
-### Build silver with dbt
+### Build silver and gold with dbt
 
 ```sh
 uv run --env-file .env dbt build --project-dir dbt --profiles-dir dbt   # all models and tests, in dependency order
@@ -131,8 +131,16 @@ uv run --env-file .env dbt build --project-dir dbt --profiles-dir dbt   # all mo
 
 dbt reads bronze on S3 through DuckDB, deduplicates, types and validates the events, then publishes
 silver as Parquet to `s3://sme-lake/silver/` (valid events per type, and a quarantine with the reason
-of each rejection). The warehouse itself is a local DuckDB file, `data/warehouse.duckdb`, that can be
-deleted and rebuilt at any time from bronze.
+of each rejection) and gold to `s3://sme-lake/gold/` (the star schema and one mart per analyst question).
+The warehouse itself is a local DuckDB file, `data/warehouse.duckdb`, that can be deleted and rebuilt
+at any time from bronze.
+
+| Analyst question | Gold table |
+|---|---|
+| What is the monthly revenue of each company? | `mart_monthly_revenue` |
+| Which invoices are unpaid, and how late? | `mart_aged_receivables` (detail in `fct_invoices`) |
+| What is the average payment delay (DSO) of each company? | `mart_dso` |
+| Which customers pay late most often? | `mart_late_payers` |
 
 ### Endpoints
 
@@ -150,7 +158,7 @@ deleted and rebuilt at any time from bronze.
 - [x] **M3 — Kafka**: three keyed topics with 3 partitions each; a producer that checks every delivery; a verification consumer (counts, ordering per key, resume after a stop, duplicates).
 - [x] **M4 — Spark and bronze**: Kafka to raw Parquet on S3 with Structured Streaming (`AvailableNow`), resumable through checkpoints; checked offset by offset, crash replay tested.
 - [x] **M5 — dbt silver**: typed and deduplicated data (incremental deduplication on `event_id`); invalid events go to quarantine with a reason; silver published as Parquet on S3; a reconciliation test accounts for every bronze event.
-- [ ] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices and DSO (days sales outstanding).
+- [x] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices, DSO (days sales outstanding) and late payers; gold reconciled with silver to the cent.
 - [ ] **M7 — Data quality**: dbt contracts, business tests, freshness checks, reconciliation with the generator manifest, dbt docs.
 - [ ] **M8 — Airflow**: end-to-end DAG with retries, replays without duplicates, backfill and failure alerts.
 - [ ] **M9 — Glue and Athena**: gold tables registered in the catalog and queried through Athena.

@@ -247,3 +247,51 @@
 **Status:** M5 closed on 2026-11-11, merged through the module's pull request.
 
 **Next:** M6, dbt gold and the star schema.
+
+## M6: dbt gold and the star schema (2026-11-11)
+
+**Goal:** deliver a model built as a product for analysts, answering their four questions reliably.
+
+**What was built** (`dbt/models/gold/`, published as Parquet to `s3://sme-lake/gold/`)
+
+| Table | Grain: one row is |
+|---|---|
+| `fct_invoices` | an invoice (accumulating snapshot): milestones (issued, due, settled, cancelled), amounts, amount paid and outstanding, days to settle, days late, status, as of the last event received |
+| `fct_payments` | a money movement: a payment received (amount > 0) or a refund (amount < 0) |
+| `dim_customer` | a version of a customer (SCD2), with `valid_from`, `valid_to` and `is_current` |
+| `dim_company` | a company (thin: the event contract carries no company attribute yet) |
+| `dim_date` | a calendar day |
+| `mart_monthly_revenue` | a company and a month (question 1: revenue excluding VAT) |
+| `mart_aged_receivables` | a company and an ageing bucket (question 2: unpaid invoices and how late) |
+| `mart_dso` | a company (question 3: days to first payment, days to settle, accounting DSO over 90 days) |
+| `mart_late_payers` | a customer (question 4: share of invoices paid late or overdue) |
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| Each table has its grain written in its description | ✅ `gold.yml`: every description starts with the grain |
+| The four questions are answered by a query | ✅ one mart per question |
+| A customer's change of address creates a new row in `dim_customer` | ✅ test `scd2_dim_customer`: every update starts a version, one current version per customer |
+| The gold invoice total matches a direct calculation on silver | ✅ test `reconciliation_gold_to_silver`: number of invoices, total incl. VAT, revenue excl. VAT and net amount received, to the cent |
+
+`dbt build` from bronze to gold: 18 models and 51 tests, 69/69 in 4 seconds.
+
+**Decisions**
+- The invoice fact is an accumulating snapshot (one row per invoice) rather than a periodic snapshot (one row per invoice per day): it answers the four questions with far fewer rows. A daily snapshot remains possible to follow the outstanding amount over time.
+- Payments are at the grain of the money movement: an invoice can be paid in several parts, and a fine grain can always be summed up, never split back.
+- The SCD2 is computed from the event history kept in silver (`lead(event_time)`), not with dbt snapshots: snapshots capture the state of a table that overwrites its rows, while our source already records each change with its exact time.
+- Surrogate keys are hashes of the business key and the version start: stable from one run to the next, unlike row numbers.
+- Each invoice points to the customer version valid when it was issued (point-in-time join).
+- Revenue uses the amount excluding VAT and the month of the issue date; whether an invoice is paid uses the amount including VAT.
+
+**What the data showed**
+- 1,359 invoices in gold, the valid issued invoices of silver. 616 were still unpaid on the snapshot date, with an average delay of 1.5 days: most were simply not due yet. Unpaid does not mean late, hence the ageing buckets.
+- The bad payers stand out on their own (83 %, 80 % and 71 % of invoices late), although their payer profile is written nowhere in the data.
+- Days to settle (32 to 38 days) only measure settled invoices and underestimate the delay (survivorship bias); the accounting DSO (37 to 51 days) also counts what is still owed.
+
+**Still open:** a daily snapshot of the outstanding amounts; company attributes (name, sector) if the application sends them; the snapshot date is the last event received, which is right for a closed period but would be "today" in production.
+
+**Status:** M6 closed on 2026-11-11, merged through the module's pull request.
+
+**Next:** M7, quality, contracts and catalogue.

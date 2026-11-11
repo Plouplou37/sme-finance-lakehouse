@@ -34,3 +34,8 @@ models:
       # Rebuilt in full at every run: external models do not support incremental.
       +materialized: external
       +schema: silver
+    gold:
+      # The star schema for analysts (M6): facts, dimensions and marts, published as Parquet to
+      # s3://sme-lake/gold/ (location set in each model), for Glue and Athena in M9.
+      +materialized: external
+      +schema: gold

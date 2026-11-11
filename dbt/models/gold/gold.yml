@@ -1,0 +1,85 @@
+version: 2
+
+# Star schema for analysts. Every description starts with the GRAIN: what one row is.
+
+models:
+  - name: fct_invoices
+    description: >
+      Grain: one row per invoice (accumulating snapshot). Milestones (issued, due, settled, cancelled)
+      and measures (amounts, amount paid, amount outstanding, days to settle, days late), as of the last
+      event received (as_of_date). customer_key points to the customer version valid when the invoice was issued.
+    columns:
+      - name: invoice_id
+        data_tests: [unique, not_null]
+      - name: customer_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_key
+      - name: company_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_company')
+                field: company_key
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['open', 'partially_paid', 'paid', 'cancelled']
+
+  - name: fct_payments
+    description: >
+      Grain: one row per money movement on an invoice: a payment received (amount > 0) or a refund
+      (amount < 0). Not one row per invoice: an invoice can receive several partial payments.
+    columns:
+      - name: movement_id
+        data_tests: [unique, not_null]
+      - name: invoice_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_invoices')
+                field: invoice_id
+      - name: movement_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['payment', 'refund']
+
+  - name: dim_customer
+    description: >
+      Grain: one row per version of a customer (SCD2). A move creates a new row; valid_from and
+      valid_to bound each version, and is_current marks the latest one.
+    columns:
+      - name: customer_key
+        data_tests: [unique, not_null]
+
+  - name: dim_company
+    description: "Grain: one row per company. Thin: the event contract carries no company attribute yet."
+    columns:
+      - name: company_key
+        data_tests: [unique, not_null]
+      - name: company_id
+        data_tests: [unique, not_null]
+
+  - name: dim_date
+    description: "Grain: one row per calendar day, between the first and the last date used by the facts."
+    columns:
+      - name: date_key
+        data_tests: [unique, not_null]
+
+  - name: mart_monthly_revenue
+    description: "Grain: one row per company and per month of issue. Question 1: monthly revenue (excl. VAT, cancelled invoices excluded)."
+
+  - name: mart_aged_receivables
+    description: "Grain: one row per company and per ageing bucket, as of the snapshot date. Question 2: unpaid invoices and how late they are."
+
+  - name: mart_dso
+    description: "Grain: one row per company, as of the snapshot date. Question 3: average payment delay (days to settle, and accounting DSO over 90 days)."
+
+  - name: mart_late_payers
+    description: "Grain: one row per customer. Question 4: share of judged invoices paid late or overdue."
