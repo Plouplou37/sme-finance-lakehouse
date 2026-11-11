@@ -1,0 +1,27 @@
+# Connection settings for dbt-duckdb. No secret here: credentials come from environment variables
+# (loaded from .env by `uv run --env-file .env`).
+sme_lake:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # The warehouse is a single DuckDB file, relative to the folder dbt is run from (the repository root).
+      # data/ is ignored by Git.
+      path: data/warehouse.duckdb
+      threads: 2
+      settings:
+        # Show and convert timestamps in UTC, like the event contract, whatever the machine's time zone.
+        # Without it, DuckDB used the Windows time zone: 06:35 UTC was displayed as 07:35, and a date
+        # taken from a timestamp could change day (the time-zone trap seen in M2).
+        TimeZone: UTC
+      extensions:
+        - httpfs                  # lets DuckDB read s3:// paths (downloaded once, signed by DuckDB)
+      secrets:
+        # S3 on Floci, the same fake credentials and endpoint as the other host tools.
+        - type: s3
+          key_id: "{{ env_var('AWS_ACCESS_KEY_ID') }}"
+          secret: "{{ env_var('AWS_SECRET_ACCESS_KEY') }}"
+          region: "{{ env_var('AWS_DEFAULT_REGION') }}"
+          endpoint: "{{ env_var('AWS_ENDPOINT_URL') | replace('http://', '') }}"   # DuckDB wants host:port
+          url_style: path         # bucket in the path, like config/aws-config
+          use_ssl: false

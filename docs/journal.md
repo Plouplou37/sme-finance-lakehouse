@@ -202,3 +202,48 @@
 **Status:** M4 closed on 2026-11-11, merged through the module's pull request.
 
 **Next:** M5, dbt silver.
+
+## M5: dbt silver (2026-11-11)
+
+**Goal:** turn bronze into clean, typed and deduplicated data, with every invalid event set aside and explained.
+
+**What was built**
+- dbt project (`dbt/`) on DuckDB (dbt-core 1.12.6, dbt-duckdb 1.11.1, duckdb 1.5.6), run from the host with uv. The warehouse is a single DuckDB file (`data/warehouse.duckdb`); DuckDB reads bronze directly on S3 through its httpfs extension. Usage statistics are turned off, and the session time zone is UTC.
+- Three layers of models:
+  - `staging/`: `stg_events` reads bronze once per run and parses the envelope; `stg_events_deduplicated` keeps one row per `event_id`, as an incremental model.
+  - `intermediate/`: one model per event type parses its fields (amounts as `DECIMAL(18,2)`) and computes a single rejection reason per event.
+  - `silver/`: only the final products, written as Parquet to `s3://sme-lake/silver/`: valid customer, invoice and payment events, and the quarantine with its reason and raw JSON.
+- Engine-specific SQL (JSON extraction, safe cast) sits in macros behind `adapter.dispatch`, so moving to another engine means rewriting two macros, not every model.
+- 30 data tests, including a reconciliation test, and Write-Audit-Publish: the critical tests run on the intermediate models, so a failure skips the silver models and leaves the published Parquet untouched.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| `dbt build` succeeds | ✅ 39/39 (9 models, 30 tests) in 2.9 s, from an empty warehouse |
+| No duplicate `event_id` in silver | ✅ `unique` tests on every silver and intermediate model |
+| Schema versions 1 and 2 are both read | ✅ 195 payments in v1 (`payment_method` NULL) and 689 in v2 |
+| Invalid data goes to quarantine with a reason | ✅ 30 events, matching the generator's manifest reason by reason: 7 non-positive amounts, 11 unknown currencies, 10 unknown references, 2 overpayments |
+| Every bronze event ends up in silver, in quarantine, or counted as a duplicate | ✅ `reconciliation_bronze_to_silver` passes: 2,578 = silver + 30 + 59 duplicates |
+
+**Decisions**
+- Deduplicate first, then type and validate: a copy of an invalid event counts as a duplicate, not as a second rejection, like in the manifest.
+- Deduplication is incremental: later runs read only the rows ingested since the last run, minus a 3-day margin, and `unique_key = event_id` makes a re-read row replace the stored one (delete + insert).
+- One rejection reason per event, named after the manifest's anomalies, computed once in the intermediate layer and used by both the silver tables and the quarantine.
+- Rejected events are never deleted: they are kept with their raw JSON, to audit them, count them by reason and replay them.
+- Silver is published as Parquet (`external` materialization) so that any engine can read it; such models are rebuilt in full at each run.
+- The model structure (deduplication in staging, an intermediate layer, only final products in silver) came from two design reviews during the module and is simpler than the first draft.
+
+**Lessons**
+- `dbt show` previews only 5 rows by default: a "missing" row was just cut from the preview.
+- `count(column)` ignores NULLs, unlike `count(*)`.
+- `is distinct from` and `not exists` instead of `<>` and `not in`: with NULLs, the latter silently let invalid rows through.
+- DuckDB used the Windows time zone until it was set to UTC: a timestamp shown one hour off could also have changed a date.
+- dbt never drops a model removed from the project: old objects stay in the warehouse until removed.
+- dbt builds a model, then tests it: without Write-Audit-Publish, a failing test would come after the Parquet file was already replaced.
+
+**Still open:** the intermediate and silver models are rebuilt in full (fine at this volume); events whose `event_id` cannot be read are routed to quarantine but none was produced to test it; the reconciliation with the manifest is checked by hand, M7 will automate it.
+
+**Status:** M5 closed on 2026-11-11, merged through the module's pull request.
+
+**Next:** M6, dbt gold and the star schema.

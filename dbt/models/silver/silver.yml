@@ -1,0 +1,59 @@
+version: 2
+
+# Generic tests: dbt turns each one into a query that returns the faulty rows (0 rows = pass).
+models:
+  - name: silver_customer_events
+    description: Valid customer events, deduplicated and typed. One row per customer version.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: customer_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['company', 'individual']
+
+  - name: silver_invoice_events
+    description: Valid invoice events (issued, updated, cancelled), deduplicated and typed.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: invoice_id
+        data_tests: [not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['invoice_issued', 'invoice_updated', 'invoice_cancelled']
+
+  - name: silver_payment_events
+    description: Valid payment events (received in schema v1 and v2, refunded), deduplicated and typed.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: invoice_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('silver_invoice_events')
+                field: invoice_id
+      - name: amount
+        data_tests: [not_null]
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['EUR']
+
+  - name: silver_quarantine
+    description: Rejected events with their reason and raw JSON. Never deleted.
+    columns:
+      - name: rejection_reason
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['non_positive_amount', 'unknown_currency', 'unknown_reference', 'overpayment', 'unreadable_event']

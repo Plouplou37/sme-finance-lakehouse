@@ -1,0 +1,67 @@
+version: 2
+
+# Write-Audit-Publish: the critical tests run HERE, before silver is published to S3.
+# If one of them fails, `dbt build` skips every model that depends on the tested model: the silver
+# Parquet files are not rewritten, and the last good version stays in place.
+# Rejected rows are allowed to break the rules (a currency "XYZ" is the very reason they are rejected),
+# so the rule tests only look at valid rows (where: rejection_reason is null).
+
+models:
+  - name: int_customer_events
+    description: Customer events, deduplicated and typed, with their rejection reason (NULL = valid).
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: customer_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['company', 'individual']
+              config:
+                where: "rejection_reason is null"
+
+  - name: int_invoice_events
+    description: Invoice events, deduplicated and typed, with their rejection reason (NULL = valid).
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['invoice_issued', 'invoice_updated', 'invoice_cancelled']
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['EUR']
+              config:
+                where: "rejection_reason is null and event_type != 'invoice_cancelled'"
+      - name: rejection_reason
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['non_positive_amount', 'unknown_currency', 'unknown_reference']
+
+  - name: int_payment_events
+    description: Payment events, deduplicated and typed, with their rejection reason (NULL = valid).
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: amount
+        data_tests:
+          - not_null:
+              config:
+                where: "rejection_reason is null"
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['EUR']
+              config:
+                where: "rejection_reason is null"
+      - name: rejection_reason
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['non_positive_amount', 'unknown_currency', 'unknown_reference', 'overpayment']

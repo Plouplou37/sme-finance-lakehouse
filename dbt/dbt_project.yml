@@ -1,0 +1,36 @@
+# dbt project: turns the bronze layer (raw Kafka events written by Spark) into silver (M5), then gold (M6).
+# Run from the repository root:
+#   uv run --env-file .env dbt build --project-dir dbt --profiles-dir dbt
+name: sme_lake
+version: "1.0.0"
+profile: sme_lake                 # connection settings: see profiles.yml
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"             # compiled SQL (target/compiled) and executed SQL (target/run)
+clean-targets: ["target", "dbt_packages"]
+
+flags:
+  send_anonymous_usage_stats: false   # dbt sends usage statistics by default: turned off
+
+# Settings per folder of models/. A gold/ block will be added in M6.
+models:
+  sme_lake:
+    staging:
+      # Views by default: nothing stored, recomputed when read. The model that reads bronze on S3
+      # overrides this to a table, so S3 is read and the JSON parsed once per run, not once per reader.
+      +materialized: view
+      +schema: staging
+    intermediate:
+      # Typing and validity rules: each rejection reason is computed ONCE here, then used by both the
+      # silver tables (valid events) and the quarantine (rejected events). Not published.
+      +materialized: table
+      +schema: intermediate
+    silver:
+      # Only the final products: valid events per type and the quarantine. "external": dbt-duckdb writes
+      # each one as a Parquet file on S3 (location set in each model), and keeps in DuckDB only a view that
+      # reads that file. Any engine (Spark, Athena in M9) can then read silver without DuckDB.
+      # Rebuilt in full at every run: external models do not support incremental.
+      +materialized: external
+      +schema: silver
