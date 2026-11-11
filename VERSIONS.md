@@ -54,15 +54,14 @@ Installed on the machine; everything else runs in containers. Tested in M1 (2026
 | boto3 | `1.43.126` (botocore `1.43.126`) | Latest release when added in M1, not checked against the 14-day rule (boto3 ships almost daily). All packages, direct and indirect, are locked with their hashes in `uv.lock` |
 | confluent-kafka | `2.16.0` | Kafka client (M3), a wrapper around librdkafka. Newest release at least 14 days old (2026-10-07; 2.16.1 was 12 days old). Ships a Windows wheel for CPython 3.12 |
 | pytest (dev only) | `9.1.1` | Tests (M2). Newest release at least 14 days old (2026-06-19; 9.2.0 was 12 days old). Its 5 dependencies were not checked against the 14-day rule |
+| dbt-core | `1.12.6` | Transformations (M5). Newest release at least 14 days old (2026-10-14). PyPI now recommends installing `dbt`, and says the `dbt-core` name will be deprecated in the long term |
+| dbt-duckdb | `1.11.1` | dbt adapter for DuckDB (M5), released 2026-10-26 (16 days old when added) |
+| duckdb (host) | `1.5.6` | Engine of dbt (M5): the version tested in M0. 2.0.0 is a major release, and its compatibility with dbt-duckdb is not documented |
+
+dbt-core brings about 50 indirect dependencies (56 packages installed in M5): they are locked with their hashes in `uv.lock`, but were not checked one by one against the 14-day rule.
 
 ## Not pinned
 
 | Component | Status |
 |---|---|
-| DuckDB `httpfs` extension | Downloaded by floci-duck at first start and kept in the `floci-duck-ext` volume. Signed by DuckDB, but it can receive updates: installed version not recorded yet |
-
-## Planned (not installed yet)
-
-| Library | Version | Module |
-|---|---|---|
-| dbt-duckdb | to pin in M5 (1.11.1 was the latest on 2026-10-26) | M5 |
+| DuckDB `httpfs` extension | Downloaded by floci-duck at first start and kept in the `floci-duck-ext` volume, and by DuckDB on the host at the first dbt run. Signed by DuckDB, but it can receive updates: installed versions not recorded yet |

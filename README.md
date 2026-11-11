@@ -44,7 +44,7 @@ whose broker did not survive restarts. See [ADR 0001](docs/adr/0001-floci.md).
 ```text
 s3://sme-lake/
 ├── bronze/        raw events from Kafka, unchanged (topic=<topic>/ingestion_date=<date>/)
-├── silver/        cleaned, typed and deduplicated data
+├── silver/        cleaned, typed and deduplicated data, and the quarantine (Parquet, written by dbt)
 ├── gold/          star schema and marts for analysts
 ├── quarantine/    rejected events, with the reason
 ├── checkpoints/   Spark streaming progress
@@ -123,6 +123,17 @@ The first run builds the Spark image. The job reads everything that arrived sinc
 to `s3://sme-lake/bronze/topic=<topic>/ingestion_date=<date>/`, then stops. Running it again without new
 messages writes nothing: its checkpoint remembers the offsets already written.
 
+### Build silver with dbt
+
+```sh
+uv run --env-file .env dbt build --project-dir dbt --profiles-dir dbt   # all models and tests, in dependency order
+```
+
+dbt reads bronze on S3 through DuckDB, deduplicates, types and validates the events, then publishes
+silver as Parquet to `s3://sme-lake/silver/` (valid events per type, and a quarantine with the reason
+of each rejection). The warehouse itself is a local DuckDB file, `data/warehouse.duckdb`, that can be
+deleted and rebuilt at any time from bronze.
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -138,7 +149,7 @@ messages writes nothing: its checkpoint remembers the offsets already written.
 - [x] **M2 — Data generator**: reproducible invoice and payment events (`--seed`), with known anomalies and a manifest. See the [event contract](docs/event-contract.md).
 - [x] **M3 — Kafka**: three keyed topics with 3 partitions each; a producer that checks every delivery; a verification consumer (counts, ordering per key, resume after a stop, duplicates).
 - [x] **M4 — Spark and bronze**: Kafka to raw Parquet on S3 with Structured Streaming (`AvailableNow`), resumable through checkpoints; checked offset by offset, crash replay tested.
-- [ ] **M5 — dbt silver**: typed and deduplicated data; invalid events go to quarantine with a reason.
+- [x] **M5 — dbt silver**: typed and deduplicated data (incremental deduplication on `event_id`); invalid events go to quarantine with a reason; silver published as Parquet on S3; a reconciliation test accounts for every bronze event.
 - [ ] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices and DSO (days sales outstanding).
 - [ ] **M7 — Data quality**: dbt contracts, business tests, freshness checks, reconciliation with the generator manifest, dbt docs.
 - [ ] **M8 — Airflow**: end-to-end DAG with retries, replays without duplicates, backfill and failure alerts.
