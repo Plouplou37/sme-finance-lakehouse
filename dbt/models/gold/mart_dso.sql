@@ -1,7 +1,9 @@
 {{ config(location='s3://sme-lake/gold/mart_dso.parquet') }}
 
 -- Question 3: what is the average payment delay (DSO) of each company?
--- Grain: one row per company, as of the snapshot date. Two views of the same question:
+-- Grain: one row per company, as of the snapshot date. Several views of the same question:
+-- - days_to_first_payment: from the issue date to the FIRST payment, partial or not
+--   (the customer starts paying); counts partially paid invoices too;
 -- - days_to_settle: measured on settled invoices, from the issue date to the settlement date
 --   (with partial payments, the date of the payment that completes the invoice), simple and
 --   weighted by amount (a large invoice paid late weighs more than a small one);
@@ -19,6 +21,7 @@ select
     company_id,
     max(as_of_date)                                                           as as_of_date,
     count(*) filter (where status = 'paid')                                   as settled_invoices,
+    round(avg(first_payment_date - issue_date), 1)                            as avg_days_to_first_payment,
     round(avg(days_to_settle), 1)                                             as avg_days_to_settle,
     round(
         sum(days_to_settle * amount_incl_vat) filter (where status = 'paid')
