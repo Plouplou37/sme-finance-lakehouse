@@ -92,6 +92,26 @@ services:
     depends_on:
       - redpanda
 
+  # --- Jobs: in the "jobs" profile, run on demand with `docker compose run --rm spark` ---
+
+  spark:
+    # M4: PySpark in local mode (driver + 2 task threads in one JVM): Kafka -> bronze Parquet on Floci's S3.
+    build: ./spark                  # apache/spark 4.2.0 + s3a and Kafka connector jars, see spark/Dockerfile
+    image: sme-lake-spark:4.2.0     # name of the image built from spark/Dockerfile
+    profiles: ["jobs"]
+    environment:
+      # Read by s3a's default credential chain; fake values accepted by Floci.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?copy .env.example to .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?copy .env.example to .env}
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092   # internal listener: Spark runs inside the Docker network
+    volumes:
+      - ./spark/jobs:/jobs:ro       # PySpark jobs
+    command: ["/opt/spark/bin/spark-submit", "/jobs/ingest_bronze.py"]
+    mem_limit: 1536m                # driver heap (1g) + JVM overhead + Python process
+    depends_on:
+      - floci
+      - redpanda
+
 volumes:
   floci-data:
   floci-duck-ext:
