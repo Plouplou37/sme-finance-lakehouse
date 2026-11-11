@@ -30,6 +30,10 @@ Checked on 2026-11-07.
 | hadoop-aws (s3a connector) | `org.apache.hadoop:hadoop-aws:3.5.0` — SHA-1 `9e594525d264c0db653c7f68da98b245f7d61ea5` | Must equal the Hadoop version exactly |
 | AWS SDK v2 | `software.amazon.awssdk:bundle:2.35.4` — SHA-1 `7252265e3970b214708e68a8b74a8fa8c875af1e` | Required by hadoop-aws 3.5.0; includes the fix for third-party S3 stores (HADOOP-19490 / HADOOP-19654) |
 | S3 analytics accelerator | `software.amazon.s3.analyticsaccelerator:analyticsaccelerator-s3:1.3.1` — SHA-1 `6c9bd0f6c440c9a78e82d272f5f0252d942419f6` | Compile dependency of hadoop-aws 3.5.0. Its stream is disabled (`fs.s3a.input.stream.type=classic`) because of an open memory leak (HADOOP-20058) |
+| Spark Kafka connector | `org.apache.spark:spark-sql-kafka-0-10_2.13:4.2.0` — SHA-1 `98f199d5da59b1e152dae941cc5037a6495464ad` | Must equal the Spark version (M4) |
+| Spark Kafka token provider | `org.apache.spark:spark-token-provider-kafka-0-10_2.13:4.2.0` — SHA-1 `807ceb26e2fa509259e74a202d5f2d790446f515` | Dependency of the connector, same version |
+| Kafka client (inside Spark) | `org.apache.kafka:kafka-clients:3.9.2` — SHA-1 `a06edbaa01458ed2e8cf1be69a18c2f231fda6e0` | Version declared by the connector's POM: not chosen, imposed |
+| Apache Commons Pool | `org.apache.commons:commons-pool2:2.13.1` — SHA-1 `cf7e8c0242d4c483c42c083b8188ab360ab60f9a` | Version declared by the connector's POM |
 
 ## Host tools
 
@@ -61,5 +65,4 @@ Installed on the machine; everything else runs in containers. Tested in M1 (2026
 
 | Library | Version | Module |
 |---|---|---|
-| Spark Kafka connector | `org.apache.spark:spark-sql-kafka-0-10_2.13:4.2.0` (brings `kafka-clients` 3.9.2) | M4 |
 | dbt-duckdb | to pin in M5 (1.11.1 was the latest on 2026-10-26) | M5 |

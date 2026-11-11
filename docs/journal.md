@@ -163,3 +163,42 @@
 **Status:** M3 closed on 2026-11-09, merged through the module's pull request.
 
 **Next:** M4, Spark and the bronze layer.
+
+## M4: Spark and the bronze layer (2026-11-11)
+
+**Goal:** copy every Kafka message into S3 as Parquet, without losing any and without any business transformation.
+
+**What was built**
+- Spark image (`spark/Dockerfile`): Spark 4.2.0 with the s3a connector from M0, plus the Kafka connector and its dependencies at the versions of its POM (spark-sql-kafka 4.2.0, spark-token-provider-kafka 4.2.0, kafka-clients 3.9.2, commons-pool2 2.13.1), each jar checked against its Maven Central SHA-1.
+- Compose service `spark` (profile `jobs`), run on demand with `docker compose run --rm spark`.
+- Ingestion job (`spark/jobs/ingest_bronze.py`): Structured Streaming from the three topics, `Trigger.AvailableNow`, at most 1,000 messages per micro-batch, checkpoint in `s3a://sme-lake/checkpoints/bronze`. Each row keeps the message as text (`raw_json`, not parsed) with its Kafka key, topic, partition, offset and timestamp, plus `ingested_at` and `ingestion_date`. Output: Parquet in `s3a://sme-lake/bronze/topic=<topic>/ingestion_date=<date>/`.
+- Check job (`spark/jobs/check_bronze.py`): reads bronze without trusting the ingestion job and prints the physical plan of its main query.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| Bronze rows match the Kafka messages | ✅ 2,578 rows; in each of the 9 Kafka partitions, offsets run from 0 to the last one with no gap and no duplicate |
+| A re-run without new messages adds no row | ✅ `0 messages in 0 batches`, bronze unchanged |
+| After a stop, a resume loses nothing and does not re-read everything | ✅ Crash simulated by deleting the commit marker of batch 2: only batch 2 was replayed, with the same offsets, and no file was written twice |
+| Show and comment a plan with `explain()` | ✅ Scan with column pruning, partition columns from folder names, three shuffles (`groupBy`, `countDistinct`, `orderBy`) |
+
+**Decisions**
+- Bronze keeps the raw JSON: a schema change in the application can never break ingestion, and silver can be rebuilt from bronze at any time.
+- `Trigger.AvailableNow`: incremental batch, started on demand (by Airflow in M8), instead of a permanent streaming job.
+- Folders `topic=<topic>/ingestion_date=<date>/` (Hive style) rather than `<topic>/`: the topic becomes a column when reading, and filters on topic or date skip whole folders.
+- The image keeps the M0 download block unchanged, so Docker reuses its cached layer.
+
+**Experiments and lessons**
+- The 1,000-message limit is shared among the 9 Kafka partitions: batches of 995, 996 and 587 messages.
+- 27 files for 2,578 rows (3 batches × 9 partitions): the small-file problem, measured.
+- In the plan, the scan reads only `kafka_partition` and `kafka_offset`: `raw_json`, the largest column, is never read from disk (columnar format).
+- `MetadataLogFileIndex`: a Spark reader lists files from the sink's `_spark_metadata` log, so it ignores files left by an unfinished batch. DuckDB or Athena would list the whole folder: duplicates must still be removed in silver.
+- Crash between writing a batch and committing it: Spark replays the batch with the same offsets; the file sink finds it in `_spark_metadata` and skips it. A first summary that hid empty batches made this invisible; the checkpoint's timestamps settled it.
+- A checkpoint and its output folder are a pair: they are reset together, or the job writes to a new folder.
+
+**Still open:** not tested: deleting the checkpoint while keeping `_spark_metadata`, and `failOnDataLoss` when Kafka retention has expired (documented behaviour: the query fails); Spark's progress is invisible to Kafka lag tools (offsets in the checkpoint); compacting small files; Spark takes about ten seconds to start for 2,578 messages, to compare with DuckDB in bonus B1.
+
+**Status:** M4 closed on 2026-11-11, merged through the module's pull request.
+
+**Next:** M5, dbt silver.
