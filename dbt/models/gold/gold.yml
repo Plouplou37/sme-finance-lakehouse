@@ -1,17 +1,27 @@
 version: 2
 
 # Star schema for analysts. Every description starts with the GRAIN: what one row is.
+# Every model has an enforced contract: dbt checks the names and types of its columns before building,
+# and stops before publishing the Parquet file if they differ (shown in M7 with a broken type).
+# Columns holding personal data are marked with meta.contains_pii: their access would be restricted
+# or masked in production (they are fictional here).
 
 models:
   - name: fct_invoices
     description: >
       Grain: one row per invoice (accumulating snapshot). Milestones (issued, due, settled, cancelled)
-      and measures (amounts, amount paid, amount outstanding, days to settle, days late), as of the last
-      event received (as_of_date). customer_key points to the customer version valid when the invoice was issued.
+      and measures, as of the last event received (as_of_date). customer_key points to the customer
+      version valid when the invoice was issued.
+    config:
+      contract: {enforced: true}
     columns:
       - name: invoice_id
+        data_type: varchar
+        description: Business ID of the invoice.
         data_tests: [unique, not_null]
       - name: customer_key
+        data_type: varchar
+        description: Customer version valid when the invoice was issued (dim_customer, SCD2).
         data_tests:
           - not_null
           - relationships:
@@ -19,67 +29,347 @@ models:
                 to: ref('dim_customer')
                 field: customer_key
       - name: company_key
+        data_type: varchar
+        description: Company that issued the invoice (dim_company).
         data_tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('dim_company')
                 field: company_key
+      - name: customer_id
+        data_type: varchar
+        description: Business ID of the customer, shared by all its versions.
+      - name: company_id
+        data_type: varchar
+        description: Business ID of the company.
+      - name: issue_date
+        data_type: date
+        description: Legal date printed on the invoice; sets the revenue month.
+      - name: due_date
+        data_type: date
+        description: Payment deadline of the latest version of the invoice.
+      - name: settled_date
+        data_type: date
+        description: Day the payments reached the amount incl. VAT (with partial payments, the payment that completes it).
+      - name: cancelled_date
+        data_type: date
+        description: Day the invoice was cancelled, if it was.
+      - name: cancellation_reason
+        data_type: varchar
+        description: duplicate, customer_request or billing_error.
+      - name: currency
+        data_type: varchar
+        description: ISO 4217 code; always EUR for valid invoices.
+      - name: amount_excl_vat
+        data_type: decimal(18, 2)
+        description: Amount excluding VAT, used for revenue.
+      - name: vat_amount
+        data_type: decimal(18, 2)
+        description: VAT amount.
+      - name: amount_incl_vat
+        data_type: decimal(18, 2)
+        description: Amount including VAT, what the customer owes.
+      - name: amount_paid
+        data_type: decimal(18, 2)
+        description: Payments received minus refunds.
+      - name: amount_outstanding
+        data_type: decimal(18, 2)
+        description: Amount still owed (0 for a cancelled invoice).
+      - name: payment_count
+        data_type: integer
+        description: Number of payments received.
+      - name: first_payment_date
+        data_type: date
+        description: Day of the first payment, partial or not.
       - name: status
+        data_type: varchar
+        description: open, partially_paid, paid or cancelled.
         data_tests:
           - accepted_values:
               arguments:
                 values: ['open', 'partially_paid', 'paid', 'cancelled']
+      - name: days_to_settle
+        data_type: integer
+        description: Days from issue to settlement (paid invoices only).
+      - name: days_late
+        data_type: integer
+        description: Days past the due date, at settlement or as of the snapshot date; 0 if on time or not yet due.
+      - name: as_of_date
+        data_type: date
+        description: Snapshot date, the day of the last event received.
 
   - name: fct_payments
     description: >
       Grain: one row per money movement on an invoice: a payment received (amount > 0) or a refund
       (amount < 0). Not one row per invoice: an invoice can receive several partial payments.
+    config:
+      contract: {enforced: true}
     columns:
       - name: movement_id
+        data_type: varchar
+        description: payment_id for a payment, refund_id for a refund.
         data_tests: [unique, not_null]
+      - name: movement_type
+        data_type: varchar
+        description: payment or refund.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['payment', 'refund']
+      - name: payment_id
+        data_type: varchar
+        description: The payment received, or the payment a refund gives back.
       - name: invoice_id
+        data_type: varchar
+        description: Invoice the money is for.
         data_tests:
           - relationships:
               arguments:
                 to: ref('fct_invoices')
                 field: invoice_id
-      - name: movement_type
-        data_tests:
-          - accepted_values:
-              arguments:
-                values: ['payment', 'refund']
+      - name: customer_key
+        data_type: varchar
+        description: Customer version of the invoice (dim_customer).
+      - name: company_key
+        data_type: varchar
+        description: Company of the invoice (dim_company).
+      - name: customer_id
+        data_type: varchar
+        description: Business ID of the customer.
+      - name: company_id
+        data_type: varchar
+        description: Business ID of the company.
+      - name: movement_date
+        data_type: date
+        description: Day the money was received or sent back.
+      - name: due_date
+        data_type: date
+        description: Due date of the invoice.
+      - name: amount
+        data_type: decimal(18, 2)
+        description: Positive for a payment, negative for a refund.
+      - name: payment_method
+        data_type: varchar
+        description: bank_transfer, card or direct_debit; NULL for schema version 1 payments and for refunds.
+      - name: schema_version
+        data_type: integer
+        description: Version of the event contract the event followed (1 or 2).
+      - name: days_after_due
+        data_type: integer
+        description: Payment date minus due date; negative when paid before the due date.
+      - name: event_id
+        data_type: varchar
+        description: ID of the source event, to trace the row back to bronze.
 
   - name: dim_customer
     description: >
       Grain: one row per version of a customer (SCD2). A move creates a new row; valid_from and
       valid_to bound each version, and is_current marks the latest one.
+    config:
+      contract: {enforced: true}
     columns:
       - name: customer_key
+        data_type: varchar
+        description: Surrogate key of the version, a hash of customer_id and valid_from.
         data_tests: [unique, not_null]
+      - name: customer_id
+        data_type: varchar
+        description: Business ID of the customer, shared by all its versions.
+      - name: company_id
+        data_type: varchar
+        description: Company this customer belongs to.
+      - name: customer_type
+        data_type: varchar
+        description: company or individual. For an individual, name and contact details are personal data.
+      - name: name
+        data_type: varchar
+        description: Company name, or the person's name.
+        meta: {contains_pii: true}
+      - name: email
+        data_type: varchar
+        description: Contact e-mail.
+        meta: {contains_pii: true}
+      - name: phone
+        data_type: varchar
+        description: Contact phone number.
+        meta: {contains_pii: true}
+      - name: street
+        data_type: varchar
+        description: Street address.
+        meta: {contains_pii: true}
+      - name: postal_code
+        data_type: varchar
+        description: Postal code, as text (a number would drop leading zeros).
+      - name: city
+        data_type: varchar
+        description: City of this version.
+      - name: country
+        data_type: varchar
+        description: ISO 3166-1 alpha-2 country code.
+      - name: payment_terms_days
+        data_type: integer
+        description: Payment terms granted to the customer, in days.
+      - name: valid_from
+        data_type: timestamp with time zone
+        description: Start of this version (time of the customer event).
+      - name: valid_to
+        data_type: timestamp with time zone
+        description: Start of the next version; NULL for the current one.
+      - name: is_current
+        data_type: boolean
+        description: True for the latest version of the customer.
 
   - name: dim_company
     description: "Grain: one row per company. Thin: the event contract carries no company attribute yet."
+    config:
+      contract: {enforced: true}
     columns:
       - name: company_key
+        data_type: varchar
+        description: Surrogate key, a hash of company_id.
         data_tests: [unique, not_null]
       - name: company_id
+        data_type: varchar
+        description: Business ID of the company.
         data_tests: [unique, not_null]
+      - name: first_seen_at
+        data_type: timestamp with time zone
+        description: Time of the first event of the company.
 
   - name: dim_date
     description: "Grain: one row per calendar day, between the first and the last date used by the facts."
+    config:
+      contract: {enforced: true}
     columns:
       - name: date_key
+        data_type: date
+        description: The day itself, joined to the date columns of the facts.
         data_tests: [unique, not_null]
+      - name: year
+        data_type: integer
+        description: Calendar year.
+      - name: quarter
+        data_type: integer
+        description: Quarter, 1 to 4.
+      - name: month
+        data_type: integer
+        description: Month, 1 to 12.
+      - name: year_month
+        data_type: varchar
+        description: Year and month, YYYY-MM.
+      - name: month_start
+        data_type: date
+        description: First day of the month.
+      - name: iso_day_of_week
+        data_type: integer
+        description: 1 = Monday ... 7 = Sunday.
+      - name: is_weekend
+        data_type: boolean
+        description: True on Saturday and Sunday.
 
   - name: mart_monthly_revenue
     description: "Grain: one row per company and per month of issue. Question 1: monthly revenue (excl. VAT, cancelled invoices excluded)."
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: company_id
+        data_type: varchar
+        description: Business ID of the company.
+      - name: year_month
+        data_type: varchar
+        description: Month of the issue date, YYYY-MM.
+      - name: month_start
+        data_type: date
+        description: First day of that month.
+      - name: invoices_issued
+        data_type: integer
+        description: Invoices issued in the month, not cancelled.
+      - name: revenue_excl_vat
+        data_type: decimal(18, 2)
+        description: Revenue excluding VAT.
+      - name: invoiced_incl_vat
+        data_type: decimal(18, 2)
+        description: Amount invoiced including VAT.
 
   - name: mart_aged_receivables
     description: "Grain: one row per company and per ageing bucket, as of the snapshot date. Question 2: unpaid invoices and how late they are."
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: company_id
+        data_type: varchar
+        description: Business ID of the company.
+      - name: as_of_date
+        data_type: date
+        description: Snapshot date.
+      - name: ageing_bucket
+        data_type: varchar
+        description: Not yet due, or 1-30, 31-60, 61-90, more than 90 days late.
+      - name: unpaid_invoices
+        data_type: integer
+        description: Open or partially paid invoices in the bucket.
+      - name: amount_outstanding
+        data_type: decimal(18, 2)
+        description: Amount still owed in the bucket.
 
   - name: mart_dso
-    description: "Grain: one row per company, as of the snapshot date. Question 3: average payment delay (days to settle, and accounting DSO over 90 days)."
+    description: "Grain: one row per company, as of the snapshot date. Question 3: average payment delay (days to first payment, days to settle, accounting DSO over 90 days)."
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: company_id
+        data_type: varchar
+        description: Business ID of the company.
+      - name: as_of_date
+        data_type: date
+        description: Snapshot date.
+      - name: settled_invoices
+        data_type: integer
+        description: Invoices fully paid.
+      - name: avg_days_to_first_payment
+        data_type: decimal(10, 1)
+        description: Average days from issue to the first payment, partial or not.
+      - name: avg_days_to_settle
+        data_type: decimal(10, 1)
+        description: Average days from issue to settlement, on settled invoices only (underestimates the delay).
+      - name: weighted_days_to_settle
+        data_type: decimal(10, 1)
+        description: Same, weighted by the amount incl. VAT.
+      - name: receivables_outstanding
+        data_type: decimal(18, 2)
+        description: Amount still owed by customers.
+      - name: invoiced_last_90_days
+        data_type: decimal(18, 2)
+        description: Amount incl. VAT invoiced over the last 90 days.
+      - name: dso_90_days
+        data_type: decimal(10, 1)
+        description: Accounting DSO, receivables outstanding / invoiced over 90 days x 90.
 
   - name: mart_late_payers
-    description: "Grain: one row per customer. Question 4: share of judged invoices paid late or overdue."
+    description: "Grain: one row per customer. Question 4: share of judged invoices (settled, or unpaid past their due date) that were late."
+    config:
+      contract: {enforced: true}
+    columns:
+      - name: customer_id
+        data_type: varchar
+        description: Business ID of the customer.
+      - name: name
+        data_type: varchar
+        description: Current name of the customer.
+        meta: {contains_pii: true}
+      - name: city
+        data_type: varchar
+        description: Current city of the customer (where to reach them now).
+      - name: judged_invoices
+        data_type: integer
+        description: Invoices that can be judged on time or late.
+      - name: late_invoices
+        data_type: integer
+        description: Judged invoices paid late or overdue.
+      - name: late_share_pct
+        data_type: decimal(5, 1)
+        description: Share of late invoices, in percent.
+      - name: avg_days_late_when_late
+        data_type: decimal(10, 1)
+        description: Average delay of the late invoices, in days.
