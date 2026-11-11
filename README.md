@@ -142,6 +142,17 @@ at any time from bronze.
 | What is the average payment delay (DSO) of each company? | `mart_dso` |
 | Which customers pay late most often? | `mart_late_payers` |
 
+Quality checks and catalogue:
+
+```sh
+uv run --env-file .env dbt source freshness --project-dir dbt --profiles-dir dbt   # is bronze up to date?
+uv run --env-file .env dbt docs generate --project-dir dbt --profiles-dir dbt
+uv run --env-file .env dbt docs serve --project-dir dbt --profiles-dir dbt         # catalogue and lineage graph on http://localhost:8080
+```
+
+Gold tables have enforced contracts (column names and types checked before publishing), and
+`quality_reconciliation` compares what the platform found with the generator's manifest, type by type.
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -159,7 +170,7 @@ at any time from bronze.
 - [x] **M4 — Spark and bronze**: Kafka to raw Parquet on S3 with Structured Streaming (`AvailableNow`), resumable through checkpoints; checked offset by offset, crash replay tested.
 - [x] **M5 — dbt silver**: typed and deduplicated data (incremental deduplication on `event_id`); invalid events go to quarantine with a reason; silver published as Parquet on S3; a reconciliation test accounts for every bronze event.
 - [x] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices, DSO (days sales outstanding) and late payers; gold reconciled with silver to the cent.
-- [ ] **M7 — Data quality**: dbt contracts, business tests, freshness checks, reconciliation with the generator manifest, dbt docs.
+- [x] **M7 — Data quality**: enforced contracts on gold, reconciliation with the generator's manifest type by type, blocking and warning tests, source freshness, documented columns with personal data marked, dbt docs.
 - [ ] **M8 — Airflow**: end-to-end DAG with retries, replays without duplicates, backfill and failure alerts.
 - [ ] **M9 — Glue and Athena**: gold tables registered in the catalog and queried through Athena.
 - [ ] **M10 — CI**: GitHub Actions runs lint, pytest and `dbt build` on a sample for each pull request.
