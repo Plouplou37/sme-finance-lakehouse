@@ -22,6 +22,12 @@ models:
       # overrides this to a table, so S3 is read and the JSON parsed once per run, not once per reader.
       +materialized: view
       +schema: staging
+    intermediate:
+      # Typing and validity rules: each rejection reason is computed ONCE here, then used by both the
+      # silver tables (valid events) and the quarantine (rejected events). Not published.
+      +materialized: table
+      +schema: intermediate
     silver:
+      # Only the final products: valid events per type and the quarantine.
       +materialized: table
       +schema: silver
