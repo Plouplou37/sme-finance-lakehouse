@@ -43,7 +43,7 @@ whose broker did not survive restarts. See [ADR 0001](docs/adr/0001-floci.md).
 
 ```text
 s3://sme-lake/
-├── bronze/        raw events from Kafka, unchanged
+├── bronze/        raw events from Kafka, unchanged (topic=<topic>/ingestion_date=<date>/)
 ├── silver/        cleaned, typed and deduplicated data
 ├── gold/          star schema and marts for analysts
 ├── quarantine/    rejected events, with the reason
@@ -112,6 +112,17 @@ uv run --env-file .env python -m consumer   # read the topics back: counts, part
 The topics are created by `make up`. Running the producer twice publishes every event twice:
 duplicates are expected downstream and removed on `event_id`.
 
+### Ingest into bronze
+
+```sh
+docker compose run --rm spark                                                    # Kafka -> bronze Parquet
+docker compose run --rm spark /opt/spark/bin/spark-submit /jobs/check_bronze.py   # check bronze against Kafka
+```
+
+The first run builds the Spark image. The job reads everything that arrived since its last run, writes it
+to `s3://sme-lake/bronze/topic=<topic>/ingestion_date=<date>/`, then stops. Running it again without new
+messages writes nothing: its checkpoint remembers the offsets already written.
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -126,7 +137,7 @@ duplicates are expected downstream and removed on `event_id`.
 - [x] **M1 — Repository foundations**: one-command environment (`make up`), idempotent bucket setup, no secrets in Git.
 - [x] **M2 — Data generator**: reproducible invoice and payment events (`--seed`), with known anomalies and a manifest. See the [event contract](docs/event-contract.md).
 - [x] **M3 — Kafka**: three keyed topics with 3 partitions each; a producer that checks every delivery; a verification consumer (counts, ordering per key, resume after a stop, duplicates).
-- [ ] **M4 — Spark and bronze**: Kafka to raw Parquet on S3, resumable through checkpoints.
+- [x] **M4 — Spark and bronze**: Kafka to raw Parquet on S3 with Structured Streaming (`AvailableNow`), resumable through checkpoints; checked offset by offset, crash replay tested.
 - [ ] **M5 — dbt silver**: typed and deduplicated data; invalid events go to quarantine with a reason.
 - [ ] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices and DSO (days sales outstanding).
 - [ ] **M7 — Data quality**: dbt contracts, business tests, freshness checks, reconciliation with the generator manifest, dbt docs.
