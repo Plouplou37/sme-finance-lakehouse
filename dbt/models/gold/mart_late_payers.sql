@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/mart_late_payers.parquet') }}
+{{ config(location='s3://sme-lake/gold/mart_late_payers/mart_late_payers.parquet') }}
 
 -- Question 4: which customers pay late most often?
 -- Grain: one row per customer (business key), with its current name and city.

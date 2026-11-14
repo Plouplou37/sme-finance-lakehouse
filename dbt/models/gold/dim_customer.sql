@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/dim_customer.parquet') }}
+{{ config(location='s3://sme-lake/gold/dim_customer/dim_customer.parquet') }}
 
 -- Grain: one row per VERSION of a customer (SCD2). A customer who moved once has two rows.
 -- Built from the history already kept in silver: every customer_created or customer_updated event

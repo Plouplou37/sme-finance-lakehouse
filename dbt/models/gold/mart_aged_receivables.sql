@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/mart_aged_receivables.parquet') }}
+{{ config(location='s3://sme-lake/gold/mart_aged_receivables/mart_aged_receivables.parquet') }}
 
 -- Question 2: which invoices are unpaid, and how late are they?
 -- Grain: one row per company and per ageing bucket, as of the snapshot date.
