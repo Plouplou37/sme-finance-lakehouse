@@ -31,6 +31,8 @@ x-airflow-common: &airflow-common
     - ./data:/opt/project/data
     - ./spark/jobs:/opt/project/spark/jobs:ro
     - ./airflow/scripts:/opt/project/airflow/scripts:ro
+    - ./scripts:/opt/project/scripts:ro           # register_glue.py and check_athena.py (M9)
+    - ./analytics:/opt/project/analytics:ro       # the analysis queries run through Athena (M9)
     - airflow-warehouse:/opt/airflow/warehouse
     # Task logs, shared: the tasks write them in the scheduler, and the api-server reads them to show them
     # in the UI. Without it, the api-server must fetch them from the scheduler over the network.

@@ -1,4 +1,5 @@
-"""The whole data pipeline, every day: checks -> Kafka to bronze -> dbt audit -> dbt publish -> catalogue -> report.
+"""The whole data pipeline, every day: checks -> Kafka to bronze -> dbt audit -> dbt publish -> catalogue ->
+Glue -> Athena check -> report.
 
 Write-Audit-Publish: dbt runs twice.
 - dbt_audit builds staging and intermediate (tables in the DuckDB file, never read by the end users) and runs
@@ -15,12 +16,17 @@ Each run processes everything available (the whole generated dataset): every tas
 running a date again changes nothing (Spark's checkpoint, dbt's deduplication on event_id, full rebuilds).
 The logical date of the run is only used to name its report.
 
+Catalogue (M9): the gold tables are registered in Glue from dbt's manifest, then the analysis queries of
+analytics/ run through Athena and DuckDB, and must give the same results.
+
 Alerts: every failed attempt (retried or final) appends one line to data/alerts/alerts.log, a local stand-in
 for a Slack or e-mail webhook. Report: every successful run writes data/reports/<date>__<run>.md.
 """
 
 import json
 import socket
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -36,6 +42,7 @@ CATALOG_DIR = f"{PROJECT}/data/catalog"  # the catalogue, apart: dbt docs genera
 DBT_ARGS = "--project-dir dbt --profiles-dir dbt --log-path /opt/airflow/logs/dbt"
 SPARK_CLIENT_PYTHON = "/home/airflow/spark-client-venv/bin/python"
 REPORT_PYTHON = "/home/airflow/dbt-venv/bin/python"  # this environment has DuckDB, to read the warehouse
+SCRIPTS_PYTHON = REPORT_PYTHON  # the M9 scripts need DuckDB too, and boto3 (installed there, see the Dockerfile)
 ALERTS_FILE = Path(PROJECT) / "data" / "alerts" / "alerts.log"
 
 
@@ -103,6 +110,29 @@ def check_sources() -> None:
         raise FileNotFoundError(f"{manifest} is missing: run the generator first")
 
 
+def run_script(script: str) -> None:
+    """Run one of the repository's scripts in dbt's environment, and fail with its own last message.
+    A BashOperator would only report "exit code 1"; here the alert gets the reason the script gave."""
+    result = subprocess.run([SCRIPTS_PYTHON, script], cwd=PROJECT, capture_output=True, text=True)
+    print(result.stdout)
+    print(result.stderr, file=sys.stderr)
+    if result.returncode != 0:
+        lines = result.stderr.strip().splitlines() or result.stdout.strip().splitlines() or ["no output"]
+        raise RuntimeError(f"{script} failed (exit code {result.returncode}): {lines[-1]}")
+
+
+@task
+def register_glue() -> None:
+    """The gold tables in the Glue catalog, from dbt's manifest written by publish_catalog."""
+    run_script("scripts/register_glue.py")
+
+
+@task(retries=0)  # a difference between Athena and DuckDB would come back the same on a retry
+def check_athena() -> None:
+    """The analysis queries through Athena and DuckDB: same results, or the run fails before its report."""
+    run_script("scripts/check_athena.py")
+
+
 @dag(
     dag_id="sme_lake_pipeline",
     schedule="@daily",
@@ -167,7 +197,16 @@ def sme_lake_pipeline():
         ),
     )
 
-    check_sources() >> ingest_bronze >> dbt_audit >> dbt_publish >> publish_catalog >> run_report
+    (
+        check_sources()
+        >> ingest_bronze
+        >> dbt_audit
+        >> dbt_publish
+        >> publish_catalog
+        >> register_glue()
+        >> check_athena()
+        >> run_report
+    )
 
 
 sme_lake_pipeline()
