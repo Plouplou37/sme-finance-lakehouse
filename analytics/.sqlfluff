@@ -1,0 +1,10 @@
+# SQL lint for the analysis queries (M10), run by the CI: `uv run sqlfluff lint analytics`.
+# They run on Athena, whose engine is Trino. On Floci, Athena runs DuckDB and accepts DuckDB-only syntax
+# (M0, ADR 0002): parsing them with Trino's grammar catches what the emulator lets through.
+# The dbt models are not linted here: the CI runs them on DuckDB itself (dbt build), a stronger check.
+[sqlfluff]
+dialect = trino
+max_line_length = 120
+# ST06 wants simple columns before calculations, and counts `cast(…)` as a simple column: our measures are
+# casts of aggregates, so it would put them before the counts. The order here follows the question instead.
+exclude_rules = ST06

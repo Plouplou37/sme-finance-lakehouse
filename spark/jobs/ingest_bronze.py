@@ -87,7 +87,7 @@ def main() -> None:
         rows = read_progress(progress, "numInputRows")
         print("Batch {}: {} messages read".format(read_progress(progress, "batchId"), rows))
     total = sum(read_progress(p, "numInputRows") or 0 for p in batches)
-    print("Done: {} messages in {} batches".format(total, len(batches)))
+    print(f"Done: {total} messages in {len(batches)} batches")
 
     if "--explain" in sys.argv:
         query.explain()  # physical plan of the last batch that ran

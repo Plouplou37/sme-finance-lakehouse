@@ -9,7 +9,7 @@ transport (late arrival, duplicates), so that a duplicate is an exact copy of wh
 """
 
 import itertools
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from random import Random
 
@@ -154,12 +154,12 @@ def _overpayments(records: list[Record], rates: dict[str, float], rng: Random, f
 
 def _switch_payments_to_v2(records: list[Record], cfg: Config, rng: Random) -> None:
     """From cfg.schema_v2_start on, the application sends payment_received in version 2 (with payment_method)."""
-    start = datetime.combine(cfg.schema_v2_start, time.min, tzinfo=timezone.utc)
+    start = datetime.combine(cfg.schema_v2_start, time.min, tzinfo=UTC)
     for record in records:
         event = record.event
         if event["event_type"] != "payment_received":
             continue
-        event_time = datetime.strptime(event["event_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        event_time = datetime.strptime(event["event_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
         if event_time >= start:
             event["schema_version"] = 2
             event["payment_method"] = rng.choice(PAYMENT_METHODS)
@@ -171,7 +171,7 @@ def _delay_arrivals(records: list[Record], cfg: Config, rng: Random) -> None:
     A delay that would push an event past the end of the period is not applied: the event would be
     dropped, while its payments, already arrived, would point to an invoice missing from the files.
     """
-    end = datetime.combine(cfg.end_date, time.min, tzinfo=timezone.utc)
+    end = datetime.combine(cfg.end_date, time.min, tzinfo=UTC)
     for record in records:
         if record.anomaly is None and rng.random() < cfg.anomaly_rates["late_arrival"]:
             delayed = record.arrival_time + timedelta(seconds=rng.randint(3600, 3 * 86400))

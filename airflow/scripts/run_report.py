@@ -9,7 +9,7 @@ import json
 import os
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -59,7 +59,7 @@ def main() -> None:
     warnings = [result["unique_id"] for result in results if result["status"] == "warn"]
 
     started_at = datetime.fromisoformat(args.started_at)
-    duration = datetime.now(timezone.utc) - started_at
+    duration = datetime.now(UTC) - started_at
 
     lines = [
         f"# Pipeline run {run_date}",
