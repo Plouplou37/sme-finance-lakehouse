@@ -35,11 +35,11 @@ models:
       +materialized: external
       +schema: silver
     gold:
-      # The star schema for analysts (M6): facts, dimensions and marts, published as Parquet to
-      # s3://sme-lake/gold/ (location set in each model), for Glue and Athena in M9.
-      # One folder per table, in silver and gold (s3://sme-lake/gold/<model>/<model>.parquet): for Glue and
-      # Athena, a table is EVERYTHING under its prefix, so tables sharing a folder would be read mixed (M0).
-      +materialized: external
+      # The star schema for analysts (M6): facts, dimensions and marts. Tables in the DuckDB warehouse only
+      # (M12): dbt builds and tests them there, and nothing reaches S3 until every test has passed. Then
+      # scripts/publish_gold.py publishes each one as an Iceberg table (s3://sme-lake/gold/<model>/,
+      # registered in Glue), in one commit per table.
+      +materialized: table
       +schema: gold
     quality:
       # Quality checks of the platform itself (M7): kept in the DuckDB warehouse, not published.

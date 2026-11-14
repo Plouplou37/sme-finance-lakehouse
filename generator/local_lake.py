@@ -4,8 +4,9 @@
    Kafka (M4): one row per line of the generator's files, the line unchanged in raw_json, with Kafka-like
    coordinates (the key of the event contract, a single partition, offsets in arrival order), in Hive-style
    folders <lake>/bronze/topic=<topic>/ingestion_date=<date>/.
-2. One empty folder per silver and gold model (<lake>/<layer>/<model>/). dbt-duckdb writes each model with
-   DuckDB's COPY, which creates no parent folder: S3 has no folders to create, a local disk does.
+2. One empty folder per silver model (<lake>/silver/<model>/). dbt-duckdb writes each one with DuckDB's
+   COPY, which creates no parent folder: S3 has no folders to create, a local disk does. Gold is not written
+   by dbt any more: it stays in the warehouse, and scripts/publish_gold.py publishes it as Iceberg (M12).
 
 dbt then runs on it exactly as on the real lake:
 
@@ -26,7 +27,7 @@ import duckdb
 
 from generator.events import KEY_FIELD_BY_TOPIC
 
-PUBLISHED_LAYERS = ("silver", "gold")  # the dbt folders whose models are written as files in the lake
+PUBLISHED_LAYERS = ("silver",)  # the dbt folders whose models dbt writes as files in the lake
 
 
 def write_bronze(generated: Path, bronze: Path) -> int:

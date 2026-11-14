@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'mart_aged_receivables')) }}
-
 -- Question 2: which invoices are unpaid, and how late are they?
 -- Grain: one row per company and per ageing bucket, as of the snapshot date.
 -- Unpaid does not mean late: an open invoice whose due date has not passed is "not yet due".

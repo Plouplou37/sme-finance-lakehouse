@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'mart_monthly_revenue')) }}
-
 -- Question 1: what is the monthly revenue of each company?
 -- Grain: one row per company and per month of issue.
 -- Revenue = invoiced amounts EXCLUDING VAT, by the month of the issue date (the legal date on the
