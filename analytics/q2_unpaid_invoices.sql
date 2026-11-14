@@ -10,7 +10,8 @@ select
     fct_invoices.amount_outstanding
 from sme_lake_gold.fct_invoices
 inner join sme_lake_gold.dim_customer
-    on dim_customer.customer_id = fct_invoices.customer_id
-    and dim_customer.is_current
+    on
+        fct_invoices.customer_id = dim_customer.customer_id
+        and dim_customer.is_current
 where fct_invoices.status in ('open', 'partially_paid')
-order by fct_invoices.days_late desc, fct_invoices.invoice_id
+order by fct_invoices.days_late desc, fct_invoices.invoice_id asc

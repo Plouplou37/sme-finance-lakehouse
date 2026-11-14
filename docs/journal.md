@@ -410,6 +410,38 @@
 
 **Still open:** the SQL on a real Athena (Trino); whether Floci keeps the Glue column types, comments and parameters (not checked); removing from Glue the tables deleted from dbt; partitions (not needed at this size); access rights on personal-data columns (Lake Formation on AWS).
 
-**Status:** M9 closed on 2026-11-14.
+**Status:** M9 closed on 2026-11-14, merged through the module's pull request.
 
 **Next:** M10, continuous integration with GitHub Actions.
+
+## M10: continuous integration (2026-11-14)
+
+**Goal:** check every change automatically, and make it impossible to merge one that breaks a test.
+
+**What was built**
+- **A configurable lake root.** Every external model takes its path from a dbt macro, `lake_path('gold', 'dim_company')`, and the bronze source from the same `LAKE_ROOT` variable: `s3://sme-lake` by default (nothing changes for Airflow or by hand), a local folder in the CI.
+- **A `ci` target** in `profiles.yml`: a local DuckDB file, no S3, no credentials.
+- **`generator/local_lake.py`:** writes the generator's events as a bronze layer, with the same columns and Hive-style folders as Spark's (the Kafka key from the event contract, offsets in arrival order), plus one empty folder per silver and gold model, because dbt-duckdb writes each model with DuckDB's `COPY`, which creates no folder on a local disk.
+- **Lint:** ruff for Python (default rules, sorted imports, modern syntax, common bug patterns: 30 fixes on the first run, all mechanical, plus 2 by hand); sqlfluff for the four analysis queries, with **Trino's grammar** (they all parse; style rules applied, line length 120).
+- **`.github/workflows/ci.yml`:** one job, `checks`, on every pull request and every change on `main`: `uv sync --locked`, ruff, sqlfluff, pytest, the generator and the local lake, then `dbt build --target ci`. Actions pinned by commit, uv cached, read-only token. About 25 s.
+- **A rule set on `main`** (repository settings): pull request required, `checks` required, no force push, no deletion, no bypass, not even for the owner.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| The CI runs the lint, pytest and `dbt build` on a sample, with no external service | ✅ green on the first run: 13 tests, then 19 models and 54 tests on 2,578 generated events (same results as on the real lake: 72 pass, 1 warning), in about 25 s |
+| A pull request with a broken test is blocked | ✅ a pull request changing `first_seen_at` to a date (the M7 contract break) failed in the CI with dbt's contract table (`DATE` instead of `TIMESTAMP WITH TIME ZONE`, 22 downstream nodes skipped); `checks` marked *Required*, the merge button greyed out. Closed without merging |
+| The CI is green on `main` | ✅ after merging this module's pull request |
+
+**Lessons**
+- **DuckDB is the right engine for a CI:** the warehouse runs inside the CI machine, for free, in seconds. With a cloud warehouse, the CI would need its own schema and credentials.
+- **Keep paths out of the models.** One macro turned nine hard-coded S3 paths into a setting; the same models now run on S3 and on a laptop folder.
+- **A local disk is not S3:** S3 has no folders to create, a disk does. The CI found it before any code ran on GitHub, by simulating it on the development machine first (without `.env`, so without credentials).
+- **A rule that does not apply to the owner proves nothing:** the bypass list is empty, so the broken pull request was blocked for the repository's owner too.
+
+**Still open:** **Slim CI** (`dbt build --select state:modified+ --defer`, building only what a pull request changed, against production artifacts) at a larger scale; dbt unit tests on mocked rows; the Airflow DAG is linted but never parsed in the CI (Airflow is not installed there); the dbt models are not linted (`dbt build` runs them, which catches more, but not their style); the CI sample is the generator's default dataset, not a sample of production data.
+
+**Status:** M10 closed on 2026-11-14.
+
+**Next:** M11, documentation and the project told end to end.

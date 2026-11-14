@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/fct_invoices/fct_invoices.parquet') }}
+{{ config(location=lake_path('gold', 'fct_invoices')) }}
 
 -- Grain: one row per invoice (accumulating snapshot). The row gathers the milestones of the invoice
 -- (issued, due, settled, cancelled) and its measures, as of the last event received (as_of_date).

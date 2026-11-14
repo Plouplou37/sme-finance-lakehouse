@@ -5,11 +5,11 @@
 select
     fct_invoices.company_id,
     dim_date.year_month,
-    count(*)                                                  as invoices_issued,
+    count(*) as invoices_issued,
     cast(sum(fct_invoices.amount_excl_vat) as decimal(18, 2)) as revenue_excl_vat
 from sme_lake_gold.fct_invoices
 inner join sme_lake_gold.dim_date
-    on dim_date.date_key = fct_invoices.issue_date
+    on fct_invoices.issue_date = dim_date.date_key
 where fct_invoices.status <> 'cancelled'
 group by fct_invoices.company_id, dim_date.year_month
 order by fct_invoices.company_id, dim_date.year_month

@@ -1,0 +1,52 @@
+# Continuous integration (M10): every pull request, and every change on main, is checked on a fresh GitHub
+# machine with no service at all (no S3, no Kafka, no Spark, no Airflow): lint, the generator's tests, then
+# every dbt model and test on a sample lake written from the generator. Takes a few minutes.
+# A pull request can only be merged when this job is green (rule set on main in the repository's settings).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read  # the job only reads the repository
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Actions pinned by commit, like images by digest: a tag can be moved, a commit cannot.
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # nothing is pushed back: no token left on the disk
+
+      - name: Install uv, with its cache
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          version: "0.8.11"   # the same uv as on the development machine (VERSIONS.md)
+          enable-cache: true  # downloaded packages are kept from one run to the next, keyed on uv.lock
+
+      - name: Install the locked dependencies
+        run: uv sync --locked  # fails if uv.lock no longer matches pyproject.toml
+
+      - name: Lint Python
+        run: uv run ruff check .
+
+      - name: Lint the analysis queries with Trino's grammar
+        run: uv run sqlfluff lint analytics
+
+      - name: Test the generator
+        run: uv run pytest
+
+      - name: Generate events and a local lake
+        run: |
+          uv run python -m generator
+          uv run python -m generator.local_lake --lake-root data/ci-lake
+
+      - name: Build and test every dbt model on the sample
+        env:
+          LAKE_ROOT: data/ci-lake  # the lake is a local folder here, s3://sme-lake everywhere else
+        run: uv run dbt build --project-dir dbt --profiles-dir dbt --target ci

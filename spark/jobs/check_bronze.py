@@ -22,7 +22,7 @@ def main() -> None:
     spark.sparkContext.setLogLevel("WARN")
 
     bronze = spark.read.parquet(BRONZE_PATH)
-    print("Files read: {}".format(len(bronze.inputFiles())))
+    print(f"Files read: {len(bronze.inputFiles())}")
 
     # One line per Kafka partition: how many rows, which offsets, how many distinct offsets.
     per_partition = (
@@ -56,10 +56,10 @@ def main() -> None:
     event_ids = bronze.select(F.get_json_object("raw_json", "$.event_id").alias("event_id"))
     total = event_ids.count()
     distinct = event_ids.distinct().count()
-    print("Rows: {}, distinct event_ids: {}, extra copies: {}".format(total, distinct, total - distinct))
+    print(f"Rows: {total}, distinct event_ids: {distinct}, extra copies: {total - distinct}")
 
     if problems:
-        raise SystemExit("Bronze check failed: {}".format(problems))
+        raise SystemExit(f"Bronze check failed: {problems}")
     print("OK: every Kafka offset is in bronze exactly once")
 
     print("\nPhysical plan of the per-partition query:")

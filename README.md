@@ -1,5 +1,7 @@
 # sme-finance-lakehouse
 
+[![CI](https://github.com/Plouplou37/sme-finance-lakehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/Plouplou37/sme-finance-lakehouse/actions/workflows/ci.yml)
+
 A local data platform for a fictional small-business accounting scenario, built on a
 medallion architecture (bronze, silver, gold) over S3-compatible object storage.
 Storage and compute are decoupled, so each can scale on its own as a company grows.
@@ -198,6 +200,22 @@ answer the analyst questions above on the facts and dimensions, in SQL common to
 DuckDB. On Floci, Athena runs DuckDB: the comparison checks the catalog chain, not Trino itself.
 See [ADR 0002](docs/adr/0002-glue-athena.md).
 
+### Continuous integration
+
+Every pull request, and every change on `main`, runs [ci.yml](.github/workflows/ci.yml) on GitHub, with no
+service at all: Python lint (ruff), the analysis queries parsed with Trino's grammar (sqlfluff), the
+generator's tests, then every dbt model and test on a local lake built from the generator. `main` only
+accepts pull requests whose CI is green. The same checks run on a laptop, without Docker:
+
+```sh
+uv run ruff check .
+uv run sqlfluff lint analytics
+uv run pytest
+uv run python -m generator
+uv run python -m generator.local_lake --lake-root data/ci-lake
+LAKE_ROOT=data/ci-lake uv run dbt build --project-dir dbt --profiles-dir dbt --target ci   # PowerShell: $env:LAKE_ROOT = "data/ci-lake" first
+```
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -220,7 +238,7 @@ See [ADR 0002](docs/adr/0002-glue-athena.md).
 - [x] **M7 — Data quality**: enforced contracts on gold, reconciliation with the generator's manifest type by type, blocking and warning tests, source freshness, documented columns with personal data marked, dbt docs.
 - [x] **M8 — Airflow**: daily DAG from Kafka to gold, with Spark sent to a Spark Connect server (no Docker socket); retries, replays and a 3-day backfill without duplicates; a blocking test that stops the publication (write, audit, publish); alerts naming the task and the cause; a report on every run.
 - [x] **M9 — Glue and Athena**: gold tables registered in the Glue catalog from dbt's manifest (types, descriptions, personal data marked); four analysis queries through Athena, checked against DuckDB in the daily DAG. See [ADR 0002](docs/adr/0002-glue-athena.md).
-- [ ] **M10 — CI**: GitHub Actions runs lint, pytest and `dbt build` on a sample for each pull request.
+- [x] **M10 — CI**: GitHub Actions runs ruff, sqlfluff (Trino grammar), pytest and `dbt build` on a generated sample for every pull request, with no service; `main` only accepts green pull requests (a deliberate contract break was blocked).
 - [ ] **M11 — Documentation**: one ADR per main technology, measured results and known limits.
 
 ## Documentation

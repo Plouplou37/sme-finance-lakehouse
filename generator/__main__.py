@@ -8,7 +8,7 @@ Writes one JSON Lines file per topic and manifest.json into data/generated/ (ign
 
 import argparse
 import random
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 
 from generator import anomalies, lifecycle, writer
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     records = anomalies.inject(records, cfg, rng)
 
     # Keep only what has reached Kafka by the end of the period: later payments have not happened yet.
-    end = datetime.combine(cfg.end_date, time.min, tzinfo=timezone.utc)
+    end = datetime.combine(cfg.end_date, time.min, tzinfo=UTC)
     received = [record for record in records if record.arrival_time < end]
 
     manifest = writer.write(received, cfg, args.out)

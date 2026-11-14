@@ -18,7 +18,6 @@ from pathlib import Path
 
 import boto3
 import duckdb
-
 from register_glue import DATABASE  # run as a script, scripts/ is on the import path
 
 QUERIES_DIR = Path(__file__).resolve().parent.parent / "analytics"
@@ -128,8 +127,10 @@ def main() -> None:
         if not duck_rows:
             problems.append("no row: the comparison would prove nothing")
         if athena_rows != duck_rows:
-            different = sum(1 for a, d in zip(athena_rows, duck_rows) if a != d)
-            first = next(((a, d) for a, d in zip(athena_rows, duck_rows) if a != d), None)
+            # strict=False on purpose: the two results may differ in length, the counts are reported above.
+            pairs = list(zip(athena_rows, duck_rows, strict=False))
+            different = sum(1 for a, d in pairs if a != d)
+            first = next(((a, d) for a, d in pairs if a != d), None)
             problems.append(
                 f"rows differ: Athena {len(athena_rows)}, DuckDB {len(duck_rows)}, {different} different; "
                 f"first difference: Athena {first[0] if first else None}, DuckDB {first[1] if first else None}"

@@ -32,6 +32,7 @@ Constraints:
 ## Limits (what this does not prove)
 
 - **Athena vs DuckDB on Floci compares DuckDB with DuckDB.** The comparison proves the chain (Glue location and schema, files, the asynchronous API, the reading of results), not that real Athena (Trino) accepts this SQL or computes the same values. The queries were written to be portable, but **never run on Trino**. Rounding may differ (averages and divisions computed as floating point, then cast to decimals).
+  - *Update (M10):* the CI now parses them with sqlfluff's **Trino grammar**: all four parse without error, so DuckDB-only syntax would be caught before a merge. That checks the syntax, not the results: running them on Trino is still to do.
 - **Glue column types:** declared from the contracts, but probably not used by Floci, which reads the Parquet schema itself (not verified). On AWS, Athena reads with the Glue types, and a mismatch with the files fails the query: the contracts keep both in line, provided `register_glue` runs after every change.
 - **Column comments and parameters** (descriptions, `contains_pii`) are sent to Glue; whether Floci stores them was not checked. On AWS, access to personal-data columns would be restricted with Lake Formation, not with a parameter.
 - **Tables removed from dbt stay in Glue:** the script does not delete them yet.

@@ -27,7 +27,7 @@ import json
 import socket
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from airflow.providers.standard.operators.bash import BashOperator
@@ -75,7 +75,7 @@ def write_alert(context, level: str) -> None:
     if ti.task_id in DBT_TARGETS:
         cause = failed_dbt_nodes(ti.task_id) or cause  # name the model or test that failed, not just "exit code 1"
     alert = {
-        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "level": level,  # "retry": Airflow will try again; "failure": no attempt left, the run stops here
         "dag_id": ti.dag_id,
         "task_id": ti.task_id,
@@ -136,7 +136,7 @@ def check_athena() -> None:
 @dag(
     dag_id="sme_lake_pipeline",
     schedule="@daily",
-    start_date=datetime(2026, 11, 1, tzinfo=timezone.utc),
+    start_date=datetime(2026, 11, 1, tzinfo=UTC),
     catchup=False,  # no automatic catch-up of missed days; past dates are run on purpose (backfill)
     max_active_runs=1,  # one run at a time: DuckDB has a single writer, Spark a single checkpoint
     default_args={

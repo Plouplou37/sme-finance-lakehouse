@@ -62,6 +62,24 @@ Installed on the machine; everything else runs in containers. Tested in M1 (2026
 
 dbt-core brings about 50 indirect dependencies (56 packages installed in M5): they are locked with their hashes in `uv.lock`, but were not checked one by one against the 14-day rule.
 
+| Package (dev only) | Version | Why this version |
+|---|---|---|
+| ruff | `0.17.3` | Python lint (M10). Newest release at least 14 days old (2026-10-27, read from the PyPI page in a summary, not word for word; 0.17.4 and 0.17.5 were newer) |
+| sqlfluff | `4.5.0` | SQL lint (M10), with a Trino dialect for the Athena queries. Released 2026-10-30, 15 days old when added |
+
+Their 6 indirect dependencies (chardet, diff-cover, platformdirs, regex, tblib, tqdm) are locked in `uv.lock`, not checked one by one.
+
+## Continuous integration (GitHub Actions, M10)
+
+Actions are pinned by commit, like images by digest: a tag can be moved to another commit, a commit cannot.
+
+| Component | Version | Why this version |
+|---|---|---|
+| Runner | `ubuntu-24.04` | A fixed image instead of `ubuntu-latest`, which changes under our feet |
+| actions/checkout | `v7.0.1` = `3d3c42e5aac5ba805825da76410c181273ba90b1` | Newest release at least 14 days old (2026-07-20) |
+| astral-sh/setup-uv | `v10.3.3` = `68559e99cc807c1eb7e9238fd43a15bba460eec2` | Newest release at least 14 days old (2026-10-28) |
+| uv (in the CI) | `0.8.11` | The same version as on the development machine, so `uv.lock` is read the same way |
+
 ## Python packages (Airflow image, M8)
 
 Installed by `airflow/Dockerfile`, each tool in its own virtual environment, so that none of them can break Airflow's own dependencies.

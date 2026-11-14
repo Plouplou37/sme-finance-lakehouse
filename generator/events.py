@@ -5,7 +5,7 @@ These functions only format data. Deciding what happens, and when, is the job of
 
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from random import Random
 
@@ -93,7 +93,7 @@ def money(amount: Decimal) -> str:
 
 def timestamp(moment: datetime) -> str:
     """Contract format for event_time: ISO 8601 in UTC, such as "2026-03-02T09:15:00Z"."""
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def new_event_id(rng: Random) -> str:

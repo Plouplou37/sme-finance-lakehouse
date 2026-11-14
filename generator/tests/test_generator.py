@@ -7,7 +7,7 @@ Run from the repository root:
 import json
 import random
 from collections import Counter
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -30,7 +30,7 @@ VALID_CONTENT = {None, "late_arrival"}  # a late event is still a valid event: o
 
 
 def parse(timestamp: str) -> datetime:
-    return datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
 
 def with_anomaly(records: list[Record], kind: str) -> list[Record]:
@@ -197,7 +197,7 @@ def test_overpayment(records: list[Record]) -> None:
 
 def test_payments_switch_to_schema_v2_in_the_middle(run: tuple[Config, list[Record]]) -> None:
     cfg, records = run
-    start = datetime.combine(cfg.schema_v2_start, time.min, tzinfo=timezone.utc)
+    start = datetime.combine(cfg.schema_v2_start, time.min, tzinfo=UTC)
     payments = [r for r in records if r.event["event_type"] == "payment_received"]
     assert 0 < sum(p.event["schema_version"] == 2 for p in payments) < len(payments)  # both versions exist
     for payment in payments:

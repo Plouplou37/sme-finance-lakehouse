@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/silver/silver_customer_events/silver_customer_events.parquet') }}
+{{ config(location=lake_path('silver', 'silver_customer_events')) }}
 
 -- Valid customer events, deduplicated and typed: one row per customer version (created or updated).
 -- M6 turns them into the SCD2 dimension dim_customer.

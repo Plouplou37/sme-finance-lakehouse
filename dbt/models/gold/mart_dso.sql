@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/mart_dso/mart_dso.parquet') }}
+{{ config(location=lake_path('gold', 'mart_dso')) }}
 
 -- Question 3: what is the average payment delay (DSO) of each company?
 -- Grain: one row per company, as of the snapshot date. Several views of the same question:

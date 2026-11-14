@@ -5,7 +5,7 @@ State machine and shares: see config.py. Every random draw goes through `rng`, n
 """
 
 import itertools
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from random import Random
 
@@ -63,7 +63,7 @@ def split_amount(rng: Random, total: Decimal, parts: int) -> list[Decimal]:
 def moment_on(rng: Random, day: date, first_hour: int = 7, last_hour: int = 17) -> datetime:
     """A random time on `day`, during business hours, in UTC."""
     clock = time(rng.randint(first_hour, last_hour), rng.randint(0, 59), rng.randint(0, 59))
-    return datetime.combine(day, clock, tzinfo=timezone.utc)
+    return datetime.combine(day, clock, tzinfo=UTC)
 
 
 # Obviously fictional names, and the .example domain, reserved so that it never exists (RFC 2606).
