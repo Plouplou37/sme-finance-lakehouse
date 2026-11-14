@@ -12,8 +12,10 @@ sources:
           Only *.parquet files are read: Spark's _spark_metadata log is ignored, so files left by an
           interrupted batch would be read too. Duplicates are removed in silver, on event_id.
         meta:
+          # The lake root: s3://sme-lake by default, a local folder in CI (same as the lake_root macro;
+          # macros are not available in YAML, env_var is).
           external_location: >-
-            read_parquet('s3://sme-lake/bronze/topic=*/ingestion_date=*/*.parquet', hive_partitioning = true)
+            read_parquet('{{ env_var("LAKE_ROOT", "s3://sme-lake") }}/bronze/topic=*/ingestion_date=*/*.parquet', hive_partitioning = true)
         config:
           # Freshness: is bronze up to date? `dbt source freshness` compares the latest ingested_at
           # with the current time. A warning does not stop anything; an error would.

@@ -25,3 +25,12 @@ sme_lake:
           endpoint: "{{ env_var('AWS_ENDPOINT_URL') | replace('http://', '') }}"   # DuckDB wants host:port
           url_style: path         # bucket in the path, like config/aws-config
           use_ssl: false
+    ci:
+      # Continuous integration (M10): no S3, no Floci, no credentials. The warehouse is a local file and the
+      # lake a local folder (LAKE_ROOT=data/ci-lake), prepared from the generator's files
+      # by `python -m generator.local_lake`. Select it with --target ci.
+      type: duckdb
+      path: data/ci-warehouse.duckdb
+      threads: 2
+      settings:
+        TimeZone: UTC

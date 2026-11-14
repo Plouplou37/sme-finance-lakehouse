@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/dim_company/dim_company.parquet') }}
+{{ config(location=lake_path('gold', 'dim_company')) }}
 
 -- Grain: one row per company (a small business using the accounting software).
 -- A thin dimension: the event contract sends no company attribute (name, sector...), only its ID.
