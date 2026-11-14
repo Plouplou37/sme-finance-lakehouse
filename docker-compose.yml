@@ -2,6 +2,40 @@
 # Start with `make up`. Fake credentials come from .env, a copy of .env.example (see README).
 name: sme-lake
 
+# Settings shared by every Airflow service (M8). Airflow runs with the LocalExecutor: the scheduler runs
+# the tasks itself, as processes. The tasks run dbt locally and send the ingestion job to spark-connect over
+# the network: no task creates a container, so Airflow gets no Docker socket.
+x-airflow-common: &airflow-common
+  image: sme-lake-airflow:3.3.2      # built once, by airflow-init (see its `build`)
+  profiles: ["pipeline"]
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg://airflow:${AIRFLOW_DB_PASSWORD:?copy .env.example to .env}@airflow-postgres/airflow
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?copy .env.example to .env}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # What the tasks need: S3 on Floci, Kafka, Spark Connect, and dbt's own warehouse file.
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?copy .env.example to .env}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?copy .env.example to .env}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:?copy .env.example to .env}
+    AWS_ENDPOINT_URL: http://floci:4566
+    KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+    SPARK_REMOTE: sc://spark-connect:15002
+    DBT_DUCKDB_PATH: /opt/airflow/warehouse/warehouse.duckdb   # Airflow's own warehouse, in a volume
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./dbt:/opt/project/dbt
+    - ./data:/opt/project/data
+    - ./spark/jobs:/opt/project/spark/jobs:ro
+    - ./airflow/scripts:/opt/project/airflow/scripts:ro
+    - airflow-warehouse:/opt/airflow/warehouse
+    # Task logs, shared: the tasks write them in the scheduler, and the api-server reads them to show them
+    # in the UI. Without it, the api-server must fetch them from the scheduler over the network.
+    - airflow-logs:/opt/airflow/logs
+
 services:
   floci:
     image: floci/floci:2.4.0@sha256:5ee85db604c4aa74ac76e07ea5cc83086f37bb472bf3dbb97e34019e48efae9c
@@ -112,7 +146,116 @@ services:
       - floci
       - redpanda
 
+  spark-connect:
+    # M8: Spark as a service. A Spark Connect server listens on port 15002 and runs the jobs that clients
+    # send over the network (Airflow in M8), so no container has to be created: no Docker socket needed.
+    # Same image as the spark service (s3a and Kafka connector jars, spark-defaults.conf).
+    image: sme-lake-spark:4.2.0
+    profiles: ["pipeline"]
+    command: ["/opt/spark/sbin/start-connect-server.sh", "--wait"]   # --wait: stay in the foreground
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?copy .env.example to .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?copy .env.example to .env}
+    ports:
+      - "15002:15002"               # Spark Connect, published for the M8 spike run from the host
+    mem_limit: 1536m
+    depends_on:
+      - floci
+      - redpanda
+
+  # --- Airflow (M8), in the "pipeline" profile: `docker compose --profile pipeline up -d` ---
+
+  airflow-postgres:
+    # Airflow's metadata database (runs, task states, logs index), not the data of the platform.
+    # 16.14 (2026-08-05) and not 16.15 (2026-11-07): the project only takes releases at least 14 days old.
+    image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+    profiles: ["pipeline"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?copy .env.example to .env}
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+    mem_limit: 256m
+
+  airflow-init:
+    # One-shot: creates or upgrades Airflow's database, and the admin login, then exits.
+    # The only Airflow service with `build`: if all four had it, Compose would build the same image four
+    # times in parallel and the builds would collide on its name ("image already exists").
+    <<: *airflow-common
+    build: ./airflow
+    command: version
+    environment:
+      <<: *airflow-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:?copy .env.example to .env}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?copy .env.example to .env}
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+
+  airflow-apiserver:
+    # Web interface and API, on http://localhost:8088 (8080 is left to `dbt docs serve`).
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # It takes about a minute to start: checked every 5 s meanwhile, so the scheduler waits no longer than needed.
+      start_period: 120s
+      start_interval: 5s
+    mem_limit: 1g
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    # Decides what runs when, and (LocalExecutor) runs the tasks itself: dbt runs inside this container.
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 1536m
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      # Every task asks the API server for permission to start (Airflow 3). Started before it, the scheduler
+      # launched a task that timed out on that call and was killed (2026-11-14, run of midnight, at restart).
+      airflow-apiserver:
+        condition: service_healthy
+
+  airflow-dag-processor:
+    # Reads the DAG files in airflow/dags and stores their structure for the scheduler.
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 512m
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
 volumes:
   floci-data:
   floci-duck-ext:
   redpanda-data:
+  airflow-postgres-data:
+  airflow-warehouse:
+  airflow-logs:
