@@ -61,9 +61,11 @@ Against the local stack: `uv run --env-file .env dbt build --project-dir dbt --p
 ## Data conventions
 
 - Bronze keeps each Kafka message unchanged (`raw_json`), never parsed. Spark writes it, nothing rewrites it.
-- dbt layers: `staging` and `intermediate` stay in the DuckDB file; `silver`, `gold` and `quality`
-  are published as Parquet with `config(location=lake_path('<layer>', '<model>'))`. Never hard-code
-  an `s3://` path in a model.
+- dbt layers: `staging`, `intermediate`, `gold` and `quality` stay in the DuckDB file; `silver` is
+  published as Parquet with `config(location=lake_path('silver', '<model>'))`. Never hard-code an
+  `s3://` path in a model.
+- Gold reaches S3 only through `scripts/publish_gold.py`, as Iceberg tables in Glue, after every dbt
+  test has passed. Schema changes come from the dbt contract; never change an Iceberg table by hand.
 - One folder per table in the lake, and nothing else under a table's prefix.
 - Deduplicate on `event_id` first, then validate. One rejection reason per event; rejected events
   go to the quarantine, never deleted.
@@ -81,7 +83,11 @@ Against the local stack: `uv run --env-file .env dbt build --project-dir dbt --p
 - Floci's Athena runs DuckDB, not Trino: a query in DuckDB-only syntax can return `SUCCEEDED`
   with no result. Treat that as an error.
 - A dbt test that reads several models does not skip every model below it. The publication
-  barrier is the DAG: `dbt_audit`, then `dbt_publish`.
+  barrier is the DAG: `dbt_audit`, then `dbt_publish`, then `publish_gold`.
+- Never read an Iceberg table's folder with `read_parquet`: it also holds the files of old snapshots.
+  Follow Glue's pointer (`iceberg_scan` on `metadata_location`).
+- PyIceberg's `expire_snapshots` deletes no file: unreferenced files are removed by `publish_gold.py`,
+  only when older than a day.
 - On a local disk, DuckDB's `COPY` creates no folders (S3 needs none): `generator/local_lake.py`
   creates them for the CI.
 - A Spark checkpoint and its output folder are a pair: reset both or neither.
