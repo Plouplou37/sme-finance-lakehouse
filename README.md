@@ -81,9 +81,10 @@ make up
 
 | Command | What it does |
 |---|---|
-| `make up` | Start the platform, create the bucket, its prefixes and the Kafka topics |
-| `make down` | Stop the containers and keep the data (Docker volumes) |
-| `make reset` | Stop the containers and **delete all data** |
+| `make up` | Start the lake only (S3 and Kafka), create the bucket, its prefixes and the Kafka topics. Enough to run each step by hand |
+| `make pipeline` | `make up`, then Airflow and the Spark Connect server, to run the whole pipeline (see [below](#run-the-whole-pipeline-with-airflow)) |
+| `make down` | Stop every container and keep the data (Docker volumes) |
+| `make reset` | Stop every container and **delete all data**, Airflow's history included |
 
 Check the bucket with the AWS CLI container:
 
@@ -153,6 +154,33 @@ uv run --env-file .env dbt docs serve --project-dir dbt --profiles-dir dbt      
 Gold tables have enforced contracts (column names and types checked before publishing), and
 `quality_reconciliation` compares what the platform found with the generator's manifest, type by type.
 
+### Run the whole pipeline with Airflow
+
+Generate the events and publish them to Kafka first (see above), then:
+
+```sh
+make pipeline   # the lake, then Airflow and Spark Connect (about 5 GB more memory for Docker)
+```
+
+Open Airflow on http://localhost:8088 (login and password: `AIRFLOW_ADMIN_USER` and
+`AIRFLOW_ADMIN_PASSWORD` in `.env`, `admin` / `admin` by default). The first build of the Airflow image
+takes a few minutes, and the interface answers about a minute after the start. The `sme_lake_pipeline` DAG
+runs every day:
+
+```text
+check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog -> run_report
+```
+
+- `ingest_bronze` sends the Spark job to the Spark Connect server; Airflow only orchestrates.
+- `dbt_audit` builds staging and intermediate and runs their tests. If a blocking test fails,
+  `dbt_publish` never starts, so silver and gold on S3 stay as they were (write, audit, publish).
+- Every run processes the whole dataset, and every task is idempotent: a run can be replayed (Clear)
+  or past dates backfilled (Trigger, then Backfill) without creating duplicates.
+- Failed attempts are appended to `data/alerts/alerts.log`, each successful run writes a report to
+  `data/reports/`, and the dbt catalogue is written to `data/catalog/`.
+- To see the blocking test stop the publication, trigger the DAG with `quarantine_error_share` set
+  to `0.005` (0.5 % of events quarantined instead of 5 %).
+
 ### Endpoints
 
 | Service | From the host | From containers |
@@ -160,6 +188,8 @@ Gold tables have enforced contracts (column names and types checked before publi
 | Floci (S3, Glue, Athena) | `http://localhost:4566` | `http://floci:4566` |
 | Kafka API (Redpanda) | `localhost:19092` | `redpanda:9092` |
 | Schema Registry (Redpanda) | `http://localhost:18081` | `http://redpanda:8081` |
+| Airflow (`make pipeline`) | `http://localhost:8088` | `http://airflow-apiserver:8080` |
+| Spark Connect (`make pipeline`) | `sc://localhost:15002` | `sc://spark-connect:15002` |
 
 ## Progress
 
@@ -171,7 +201,7 @@ Gold tables have enforced contracts (column names and types checked before publi
 - [x] **M5 — dbt silver**: typed and deduplicated data (incremental deduplication on `event_id`); invalid events go to quarantine with a reason; silver published as Parquet on S3; a reconciliation test accounts for every bronze event.
 - [x] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices, DSO (days sales outstanding) and late payers; gold reconciled with silver to the cent.
 - [x] **M7 — Data quality**: enforced contracts on gold, reconciliation with the generator's manifest type by type, blocking and warning tests, source freshness, documented columns with personal data marked, dbt docs.
-- [ ] **M8 — Airflow**: end-to-end DAG with retries, replays without duplicates, backfill and failure alerts.
+- [x] **M8 — Airflow**: daily DAG from Kafka to gold, with Spark sent to a Spark Connect server (no Docker socket); retries, replays and a 3-day backfill without duplicates; a blocking test that stops the publication (write, audit, publish); alerts naming the task and the cause; a report on every run.
 - [ ] **M9 — Glue and Athena**: gold tables registered in the catalog and queried through Athena.
 - [ ] **M10 — CI**: GitHub Actions runs lint, pytest and `dbt build` on a sample for each pull request.
 - [ ] **M11 — Documentation**: one ADR per main technology, measured results and known limits.

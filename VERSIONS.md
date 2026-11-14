@@ -19,7 +19,9 @@ Checked on 2026-11-07.
 | Redpanda (Kafka API) | `redpandadata/redpanda:v26.2.6@sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce` | Replaces Floci's MSK, whose broker disappears when Floci restarts |
 | AWS CLI (test client) | `amazon/aws-cli:2.38.5@sha256:c8156a0e74e13929a42d7e60f0d4e14e7d28d980cd21822505d4bff80e5460c1` | Latest release at least 14 days old |
 | Python base (DuckDB image) | `python:3.12.15-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704` | Python 3.12 line |
-| Spark | `apache/spark:4.2.0-scala2.13-java17-python3-ubuntu@sha256:84a4eedb1abcf36a90808d5a1310e3e910b78c85d85aaa1599e31af5f862ed59` | Newest Spark release at least 14 days old (2026-07-14); Java 17 is Spark's default build target. Fallback: 4.1.3 |
+| Spark | `apache/spark:4.2.0-scala2.13-java17-python3-ubuntu@sha256:84a4eedb1abcf36a90808d5a1310e3e910b78c85d85aaa1599e31af5f862ed59` | Newest Spark release at least 14 days old (2026-07-14); Java 17 is Spark's default build target. Fallback: 4.1.3. Also runs the Spark Connect server (M8) |
+| Airflow (base of our image) | `apache/airflow:3.3.2-python3.12@sha256:9df9c8be4096b9cc626bd7cb1f2b8c712eef66c59c615f8c7e6200871ca10bd1` | Newest Airflow release at least 14 days old (2026-09-17; 3.4.0 was 5 days old on 2026-11-11). Docker Scout reports known vulnerabilities in this base image (18 critical, 118 high on 2026-11-11), not triaged |
+| PostgreSQL (Airflow's metadata database) | `postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b` | 16.15 was 7 days old (2026-11-07), so 16.14 (2026-08-05). Minor versions share the same storage format: the existing volume was kept |
 
 ## Libraries
 
@@ -60,8 +62,20 @@ Installed on the machine; everything else runs in containers. Tested in M1 (2026
 
 dbt-core brings about 50 indirect dependencies (56 packages installed in M5): they are locked with their hashes in `uv.lock`, but were not checked one by one against the 14-day rule.
 
+## Python packages (Airflow image, M8)
+
+Installed by `airflow/Dockerfile`, each tool in its own virtual environment, so that none of them can break Airflow's own dependencies.
+
+| Package | Version | Why this version |
+|---|---|---|
+| dbt-core, dbt-duckdb, duckdb | `1.12.6`, `1.11.1`, `1.5.6` | The same versions as on the host, so a model behaves the same in Airflow and by hand |
+| pyspark-client | `4.2.0` | Thin Spark Connect client (no Java): must match the Spark server. Released 2026-07-14; 4.2.1 was under 14 days old |
+| pandas | `<3` | Needed by the Spark client, which warns that it does not fully support pandas 3 yet (seen in the M8 spike) |
+
 ## Not pinned
 
 | Component | Status |
 |---|---|
 | DuckDB `httpfs` extension | Downloaded by floci-duck at first start and kept in the `floci-duck-ext` volume, and by DuckDB on the host at the first dbt run. Signed by DuckDB, but it can receive updates: installed versions not recorded yet |
+| Dependencies of the Airflow image's packages | `pip install` resolves them when the image is built, with no lock file: a rebuild can bring newer versions. A constraints file (or `uv.lock`) would fix them |
+| pandas in the Airflow image | A range (`<3`), not an exact version |
