@@ -1,13 +1,17 @@
 """The whole data pipeline, every day: checks -> Kafka to bronze -> dbt audit -> dbt publish -> catalogue ->
-Glue -> Athena check -> report.
+gold to Iceberg -> Athena check -> report.
 
-Write-Audit-Publish: dbt runs twice.
+Write-Audit-Publish: dbt runs twice, then gold is published.
 - dbt_audit builds staging and intermediate (tables in the DuckDB file, never read by the end users) and runs
   their tests, including the blocking share of rejected events;
-- dbt_publish builds silver, gold and quality (the Parquet files on S3, what the users read) and their tests.
-If a blocking test fails in the audit, Airflow never starts dbt_publish: the published files stay as they were.
-One `dbt build` alone is not enough: dbt only skips the models whose ancestors include every model the failed
-test reads, so dim_customer (customers only) was published in spite of a failed test on all three entities.
+- dbt_publish writes silver (Parquet files on S3), builds gold and quality (tables in the DuckDB file) and runs
+  their tests;
+- publish_gold (M12) publishes each gold table as an Iceberg table in Glue, in one commit per table: analysts
+  only ever see gold once every test on it has passed.
+If a blocking test fails in the audit, Airflow never starts dbt_publish: silver and gold stay as they were; if a
+test fails in dbt_publish, publish_gold never starts. One `dbt build` alone is not enough: dbt only skips the
+models whose ancestors include every model the failed test reads, so dim_customer (customers only) was published
+in spite of a failed test on all three entities.
 
 Airflow only orchestrates; the work happens elsewhere:
 - the ingestion job is sent over the network to the Spark Connect server (spark-connect service);
@@ -16,8 +20,8 @@ Each run processes everything available (the whole generated dataset): every tas
 running a date again changes nothing (Spark's checkpoint, dbt's deduplication on event_id, full rebuilds).
 The logical date of the run is only used to name its report.
 
-Catalogue (M9): the gold tables are registered in Glue from dbt's manifest, then the analysis queries of
-analytics/ run through Athena and DuckDB, and must give the same results.
+Catalogue (M9, M12): the gold tables are Iceberg tables in Glue, documented from dbt's manifest; then the
+analysis queries of analytics/ run through Athena and DuckDB, and must give the same results.
 
 Alerts: every failed attempt (retried or final) appends one line to data/alerts/alerts.log, a local stand-in
 for a Slack or e-mail webhook. Report: every successful run writes data/reports/<date>__<run>.md.
@@ -59,7 +63,7 @@ def failed_dbt_nodes(task_id: str) -> str | None:
     if task_id == "dbt_audit":
         return f"{', '.join(failed)}; publication blocked: silver and gold not rewritten"
     skipped = sum(1 for r in results if r["status"] == "skipped")
-    return f"{', '.join(failed)}; {skipped} downstream nodes skipped (not published)"
+    return f"{', '.join(failed)}; {skipped} downstream nodes skipped; gold not published to Iceberg"
 
 
 def write_alert(context, level: str) -> None:
@@ -115,16 +119,18 @@ def run_script(script: str) -> None:
     A BashOperator would only report "exit code 1"; here the alert gets the reason the script gave."""
     result = subprocess.run([SCRIPTS_PYTHON, script], cwd=PROJECT, capture_output=True, text=True)
     print(result.stdout)
-    print(result.stderr, file=sys.stderr)
+    if result.stderr:  # Airflow logs stderr as ERROR: an empty one showed up as a blank error line
+        print(result.stderr, file=sys.stderr)
     if result.returncode != 0:
         lines = result.stderr.strip().splitlines() or result.stdout.strip().splitlines() or ["no output"]
         raise RuntimeError(f"{script} failed (exit code {result.returncode}): {lines[-1]}")
 
 
 @task
-def register_glue() -> None:
-    """The gold tables in the Glue catalog, from dbt's manifest written by publish_catalog."""
-    run_script("scripts/register_glue.py")
+def publish_gold() -> None:
+    """The gold tables of the warehouse as Iceberg tables in Glue (one commit each), documented from dbt's
+    manifest written by publish_catalog; then old snapshots and unreferenced files are cleaned up."""
+    run_script("scripts/publish_gold.py")
 
 
 @task(retries=0)  # a difference between Athena and DuckDB would come back the same on a retry
@@ -203,7 +209,7 @@ def sme_lake_pipeline():
         >> dbt_audit
         >> dbt_publish
         >> publish_catalog
-        >> register_glue()
+        >> publish_gold()
         >> check_athena()
         >> run_report
     )

@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'dim_customer')) }}
-
 -- Grain: one row per VERSION of a customer (SCD2). A customer who moved once has two rows.
 -- Built from the history already kept in silver: every customer_created or customer_updated event
 -- carries the full state of the customer, so each event is a version. No dbt snapshot needed:

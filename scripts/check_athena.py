@@ -1,12 +1,14 @@
 """Run the analysis queries through Athena and through DuckDB, and check that both give the same results (M9).
 
 Each file of analytics/ is run twice, with the same SQL text:
-- by Athena (emulated by Floci), which finds the tables in the Glue catalog (scripts/register_glue.py);
-- by DuckDB, on views named like the Glue tables and reading the same S3 folders, taken from Glue too.
+- by Athena (emulated by Floci), which finds the tables in the Glue catalog (scripts/publish_gold.py);
+- by DuckDB, on views named like the Glue tables and reading what Glue points to: for an Iceberg table (M12),
+  the current metadata file, through iceberg_scan. Never the folder itself: an Iceberg folder also holds the
+  files of older snapshots, which reading every Parquet file would count again.
 The results are compared row by row, as text (Athena returns every value as text). Any difference, or a
 query that Athena reports as SUCCEEDED without a result, makes the script fail.
 
-Run from the repository root, after register_glue.py:
+Run from the repository root, after publish_gold.py:
     uv run --env-file .env python scripts/check_athena.py
 """
 
@@ -18,7 +20,7 @@ from pathlib import Path
 
 import boto3
 import duckdb
-from register_glue import DATABASE  # run as a script, scripts/ is on the import path
+from publish_gold import DATABASE  # run as a script, scripts/ is on the import path
 
 QUERIES_DIR = Path(__file__).resolve().parent.parent / "analytics"
 # Athena writes every result as a CSV file on S3. Kept out of the table folders (silver/, gold/):
@@ -74,10 +76,10 @@ def as_text(value) -> str | None:
 
 
 def duckdb_on_glue_tables(glue) -> duckdb.DuckDBPyConnection:
-    """An in-memory DuckDB with one view per Glue table, reading the folder that Glue points to."""
+    """An in-memory DuckDB with one view per Glue table, reading what Glue points to."""
     endpoint = os.environ["AWS_ENDPOINT_URL"]
     connection = duckdb.connect()
-    connection.execute("INSTALL httpfs; LOAD httpfs; SET TimeZone = 'UTC'")
+    connection.execute("INSTALL httpfs; LOAD httpfs; INSTALL iceberg; LOAD iceberg; SET TimeZone = 'UTC'")
     connection.execute(
         f"""
         CREATE SECRET floci (
@@ -94,10 +96,12 @@ def duckdb_on_glue_tables(glue) -> duckdb.DuckDBPyConnection:
     connection.execute(f"CREATE SCHEMA {DATABASE}")
     for page in glue.get_paginator("get_tables").paginate(DatabaseName=DATABASE):
         for table in page["TableList"]:
-            location = table["StorageDescriptor"]["Location"].rstrip("/")
-            connection.execute(
-                f"CREATE VIEW {DATABASE}.{table['Name']} AS SELECT * FROM read_parquet('{location}/*.parquet')"
-            )
+            parameters = table.get("Parameters", {})
+            if parameters.get("table_type", "").upper() == "ICEBERG":
+                source = f"iceberg_scan('{parameters['metadata_location']}')"  # the version Glue points to
+            else:  # a Hive-style table (M9): every Parquet file of the folder
+                source = f"read_parquet('{table['StorageDescriptor']['Location'].rstrip('/')}/*.parquet')"
+            connection.execute(f"CREATE VIEW {DATABASE}.{table['Name']} AS SELECT * FROM {source}")
     return connection
 
 

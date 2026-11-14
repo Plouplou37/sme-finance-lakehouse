@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'dim_date')) }}
-
 -- Grain: one row per calendar day, from the first to the last date used by the facts.
 -- The date itself is the key: facts store plain dates (issue_date, due_date...), easy to read and to join.
 -- generate_series and strftime are DuckDB functions; on another engine, the dbt_utils.date_spine

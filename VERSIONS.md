@@ -59,6 +59,10 @@ Installed on the machine; everything else runs in containers. Tested in M1 (2026
 | dbt-core | `1.12.6` | Transformations (M5). Newest release at least 14 days old (2026-10-14). PyPI now recommends installing `dbt`, and says the `dbt-core` name will be deprecated in the long term |
 | dbt-duckdb | `1.11.1` | dbt adapter for DuckDB (M5), released 2026-10-26 (16 days old when added) |
 | duckdb (host) | `1.5.6` | Engine of dbt (M5): the version tested in M0. 2.0.0 is a major release, and its compatibility with dbt-duckdb is not documented |
+| pyiceberg (with the `glue` and `pyarrow` extras) | `0.12.0` | Publishes gold as Iceberg tables (M12). Released 2026-09-01, the latest release (no 0.12.1 or 0.13.0 on 2026-11-14); ships a Windows wheel for CPython 3.12 |
+| pyarrow | `26.0.0` | In-memory tables that PyIceberg writes (M12). Released 2026-10-09; 26.0.1 was 11 days old |
+
+PyIceberg's own dependencies (mmh3, pyroaring, strictyaml, zstandard, tenacity, cachetools, fsspec, pyparsing…) are locked in `uv.lock`, not checked one by one against the 14-day rule.
 
 dbt-core brings about 50 indirect dependencies (56 packages installed in M5): they are locked with their hashes in `uv.lock`, but were not checked one by one against the 14-day rule.
 
@@ -90,11 +94,13 @@ Installed by `airflow/Dockerfile`, each tool in its own virtual environment, so 
 | pyspark-client | `4.2.0` | Thin Spark Connect client (no Java): must match the Spark server. Released 2026-07-14; 4.2.1 was under 14 days old |
 | pandas | `<3` | Needed by the Spark client, which warns that it does not fully support pandas 3 yet (seen in the M8 spike) |
 | boto3 (in dbt's environment) | `1.43.126` | M9: the Glue and Athena scripts run there, next to DuckDB. The version locked on the host |
+| pyiceberg[glue,pyarrow], pyarrow (in dbt's environment) | `0.12.0`, `26.0.0` | M12: `publish_gold.py` runs there. The versions locked on the host |
 
 ## Not pinned
 
 | Component | Status |
 |---|---|
 | DuckDB `httpfs` extension | Downloaded by floci-duck at first start and kept in the `floci-duck-ext` volume, and by DuckDB on the host at the first dbt run. Signed by DuckDB, but it can receive updates: installed versions not recorded yet |
+| DuckDB `iceberg` extension | Downloaded by DuckDB at the first `INSTALL iceberg` (`check_athena.py`, the M12 spike), and by floci-duck at its first Iceberg query. Same status as httpfs |
 | Dependencies of the Airflow image's packages | `pip install` resolves them when the image is built, with no lock file: a rebuild can bring newer versions. A constraints file (or `uv.lock`) would fix them |
 | pandas in the Airflow image | A range (`<3`), not an exact version |

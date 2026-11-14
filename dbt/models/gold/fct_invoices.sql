@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'fct_invoices')) }}
-
 -- Grain: one row per invoice (accumulating snapshot). The row gathers the milestones of the invoice
 -- (issued, due, settled, cancelled) and its measures, as of the last event received (as_of_date).
 -- Revenue uses amount_excl_vat; whether the invoice is paid uses amount_incl_vat (what the customer owes).

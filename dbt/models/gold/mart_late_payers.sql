@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'mart_late_payers')) }}
-
 -- Question 4: which customers pay late most often?
 -- Grain: one row per customer (business key), with its current name and city.
 -- An invoice counts as late if it was settled after its due date, or is still unpaid past it.

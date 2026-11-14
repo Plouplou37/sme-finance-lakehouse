@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'dim_company')) }}
-
 -- Grain: one row per company (a small business using the accounting software).
 -- A thin dimension: the event contract sends no company attribute (name, sector...), only its ID.
 -- It still gives the facts one place to join, ready for attributes if the application sends them one day.

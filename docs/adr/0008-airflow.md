@@ -17,12 +17,12 @@ Constraints: the services run in Docker Compose on one machine (ADR 0003), and n
 
    ```text
    check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog
-                 -> register_glue -> check_athena -> run_report
+                 -> publish_gold -> check_athena -> run_report
    ```
 
 4. **Each run processes the whole dataset, and every task is idempotent.** A run can be replayed, and any run repairs the whole history. The run's date only names its report.
 5. **Retries for passing failures only:** two retries 30 s apart by default; none for the dbt tasks and the Athena check, whose failures come back the same way.
-6. **The publication barrier lives in the DAG:** `dbt_publish` starts only if `dbt_audit` passed (ADR 0007).
+6. **The publication barrier lives in the DAG:** `dbt_publish` starts only if `dbt_audit` passed (ADR 0007), and since M12, `publish_gold` (gold as Iceberg tables, ADR 0010) starts only if `dbt_publish` passed. `register_glue` (M9) was replaced by `publish_gold`.
 7. **Alerts:** every failed attempt appends one JSON line to `data/alerts/alerts.log` (a local stand-in for a chat or paging webhook) with the task, the run, the attempt, a level (`retry`: Airflow will try again; `failure`: the run stops) and the cause. For dbt, the cause names the failed models or tests, read from dbt's `run_results.json`.
 8. **A report per run** (`data/reports/`): duration, dbt results of both passes, warnings, rows per entity, reconciliation with the manifest.
 

@@ -38,16 +38,17 @@ flowchart LR
     subgraph LAKE ["S3 data lake (Floci)"]
         B[("bronze<br/>raw messages")]
         SV[("silver<br/>clean events,<br/>quarantine")]
-        GD[("gold<br/>star schema,<br/>marts")]
+        GD[("gold<br/>Iceberg tables")]
     end
     S --> B
     B --> AU["dbt audit<br/>(DuckDB)"]
     AU -- "tests pass" --> PU["dbt publish<br/>(DuckDB)"]
     PU --> SV
-    PU --> GD
+    PU -- "tests pass" --> PG["publish gold<br/>(PyIceberg)"]
+    PG --> GD
     GD --> GL["Glue<br/>Data Catalog"]
     GL --> AT["Athena"]
-    AF["Airflow<br/>daily DAG"] -.-> S & AU & PU & GL
+    AF["Airflow<br/>daily DAG"] -.-> S & AU & PU & PG
 ```
 
 | Step | Tool | What it guarantees | Decision |
@@ -58,13 +59,16 @@ flowchart LR
 | Ingestion | Spark Structured Streaming (`AvailableNow`) | Every message in bronze once, resumable from a checkpoint | [ADR 0005](docs/adr/0005-spark-ingestion.md) |
 | Storage | S3 + Parquet, bronze / silver / gold | Raw history kept, columnar reads, one folder per table | [ADR 0006](docs/adr/0006-s3-parquet-medallion.md) |
 | Transformations | dbt + DuckDB | Deduplicated, typed, validated data; contracts, reconciliations, quarantine | [ADR 0007](docs/adr/0007-dbt-duckdb.md) |
+| Publication of gold | Apache Iceberg, written with PyIceberg | One commit per table, only after every test; a week of history; type changes refused | [ADR 0010](docs/adr/0010-iceberg-gold.md) |
 | Orchestration | Airflow | Daily run, retries, replays, backfills, alerts, and no publication if a blocking test fails | [ADR 0008](docs/adr/0008-airflow.md) |
 | Consumption | Glue Data Catalog + Athena | Tables by name, built from dbt's contracts; results checked against DuckDB | [ADR 0002](docs/adr/0002-glue-athena.md) |
 | Every change | GitHub Actions | Lint, tests and a full dbt build on every pull request; `main` only takes green ones | [ADR 0009](docs/adr/0009-github-actions-ci.md) |
 
-Architecturally this is a lakehouse (open files on object storage, a catalog, SQL engines on top),
-without an open table format: tables are plain Parquet folders, with no transactions, row updates
-or history. Apache Iceberg would add them.
+Architecturally this is a lakehouse: open files on object storage, a catalog, SQL engines on top.
+Bronze and silver are plain Parquet folders; gold, the layer analysts read, is made of Apache Iceberg
+tables, which add atomic commits, history and controlled schema changes. At this volume a single
+database would do the job: a lakehouse is a database taken apart, and this project shows each piece
+a database hides, and what it costs to run it yourself.
 
 ## Results
 
@@ -78,7 +82,8 @@ Measured on the default dataset (5 companies, 90 days, seed 42: 2,578 events, 14
 | Gold | reconciled with silver to the cent; 9 tables with enforced contracts, 90 columns described, 5 marked as personal data |
 | dbt | 19 models and 54 tests in about 4 s: 72 pass, 1 warning (1.19 % of events quarantined, above the 1 % alert, below the 5 % block) |
 | Airflow | 8 tasks per daily run; replays and a 3-day backfill gave the same counts; a stopped broker was retried then recovered; a blocking test left silver and gold untouched |
-| Athena | the four analyst queries give the same rows through Athena and DuckDB (15, 616, 5 and 161) |
+| Iceberg | 9 gold tables published in one commit each, after every test; during a write, readers kept seeing the previous version; a second, concurrent writer was refused and lost nothing; a type change was refused; a second publication changed nothing but the data's version |
+| Athena | the four analyst queries give the same rows through Athena and DuckDB (15, 616, 5 and 161), on the Iceberg tables |
 | CI | about 25 s per pull request; a deliberate contract break was blocked from merging |
 
 What the data shows: 616 invoices were unpaid at the end of the period, but most were simply not
@@ -97,9 +102,10 @@ DSO (37 to 51 days) counts what is still owed.
 - **Each run reprocesses everything.** Simple and safe to replay at this size. At scale, one day
   per run (date partitions, a window for late events, state tables merged on their key) is the
   target ([ADR 0008](docs/adr/0008-airflow.md)).
-- **Publication is guarded, not atomic.** Silver and gold are only written if the audit tests pass,
-  but tests on silver and gold themselves run after the files are written, and a reader can see a
-  table half rewritten. A table format with branches or atomic swaps would close it.
+- **Atomic per table, not across tables.** Each gold table changes in one Iceberg commit, but the nine
+  are published one after the other: for a few seconds, a reader can see a new fact table with the
+  previous dimension. Silver is still plain Parquet, written before its own tests run
+  ([ADR 0010](docs/adr/0010-iceberg-gold.md)).
 - **The CI checks the code, not the day's data or the services.** The Airflow DAG is not loaded
   there, and the sample is the generator's dataset; the data itself is tested by the pipeline at
   each run ([ADR 0009](docs/adr/0009-github-actions-ci.md)).
@@ -137,7 +143,7 @@ Open Airflow on http://localhost:8088 (`admin` / `admin` by default, set in `.en
 
 ```text
 check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog
-              -> register_glue -> check_athena -> run_report
+              -> publish_gold -> check_athena -> run_report
 ```
 
 Each run writes a report to `data/reports/`, failed attempts to `data/alerts/alerts.log`, and the
@@ -163,7 +169,7 @@ uv run --env-file .env dbt build --project-dir dbt --profiles-dir dbt           
 uv run --env-file .env dbt source freshness --project-dir dbt --profiles-dir dbt # is bronze up to date?
 uv run --env-file .env dbt docs generate --project-dir dbt --profiles-dir dbt
 uv run --env-file .env dbt docs serve --project-dir dbt --profiles-dir dbt       # catalogue and lineage on http://localhost:8080
-uv run --env-file .env python scripts/register_glue.py --manifest dbt/target/manifest.json   # gold tables in Glue
+uv run --env-file .env python scripts/publish_gold.py --manifest dbt/target/manifest.json    # gold as Iceberg tables in Glue
 uv run --env-file .env python scripts/check_athena.py                            # the four queries, Athena vs DuckDB
 ```
 
@@ -190,7 +196,7 @@ s3://sme-lake/
 ├── bronze/           every Kafka message unchanged (topic=<topic>/ingestion_date=<date>/), written by Spark
 ├── silver/           clean, typed, deduplicated events per entity, and silver_quarantine/ (rejected events
 │                     with their reason), written by dbt, one folder per table
-├── gold/             star schema and marts, written by dbt, one folder per table
+├── gold/             star schema and marts as Iceberg tables (data/ and metadata/ per table), by publish_gold.py
 ├── checkpoints/      Spark's streaming progress
 ├── athena-results/   Athena query outputs, kept out of the table folders
 ├── quarantine/       created in M1, unused: the quarantine is a silver table
@@ -221,6 +227,7 @@ s3://sme-lake/
 - [x] **M9 — Glue and Athena**: gold registered in Glue from dbt's manifest; the analyst queries checked through Athena against DuckDB.
 - [x] **M10 — CI**: GitHub Actions on every pull request, with no service; `main` only accepts green pull requests.
 - [ ] **M11 — Documentation**: one ADR per main technology, this README.
+- [x] **M12 — Iceberg**: gold published as Iceberg tables in Glue with PyIceberg, after every dbt test; atomic commits, concurrent writers and schema changes tested on Floci first (`spikes/m12/`).
 
 ## Documentation
 

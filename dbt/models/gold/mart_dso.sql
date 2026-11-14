@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'mart_dso')) }}
-
 -- Question 3: what is the average payment delay (DSO) of each company?
 -- Grain: one row per company, as of the snapshot date. Several views of the same question:
 -- - days_to_first_payment: from the issue date to the FIRST payment, partial or not

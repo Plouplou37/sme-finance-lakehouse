@@ -445,3 +445,51 @@
 **Status:** M10 closed on 2026-11-14.
 
 **Next:** M11, documentation and the project told end to end.
+
+## M11 (first part): documentation (2026-11-14)
+
+One decision record per main technology (ADRs 0003 to 0009: Docker Compose, Kafka with Redpanda, Spark, S3 and Parquet, dbt with DuckDB, Airflow, GitHub Actions), each with what was proven, its limits and when not to use it; the README rewritten around the problem, the architecture, measured results and limits; `CLAUDE.md`, the working rules for AI coding agents in this repository. The rest of M11 comes after M12.
+
+## M12: Apache Iceberg for gold (2026-11-14)
+
+**Goal:** remove the limits of plain Parquet tables where analysts read: rewrites seen half done, tests run after publication, no history, silent type changes.
+
+**Research first** (decisions and limits in [ADR 0010](adr/0010-iceberg-gold.md)): no Iceberg runtime exists for Spark 4.2; dbt-duckdb cannot write Iceberg; PyIceberg 0.12.0 writes with Glue as the catalog; Floci's Athena reads Glue tables marked as Iceberg. Hence: gold only, written by PyIceberg, catalog Glue.
+
+**Spike** (`spikes/m12/`, five scripts, on a separate Glue database and prefix)
+
+| Test | Result |
+|---|---|
+| Create and read | ✅ the same 1,359 rows and total through PyIceberg, DuckDB and Athena on Floci; Glue holds only a pointer to the current metadata file |
+| Atomic overwrite | ✅ the new files were on S3 before the commit, yet every reader still saw the old version; after the commit, all saw the new one |
+| Time travel | ✅ through PyIceberg and DuckDB; ❌ Athena's `FOR VERSION AS OF` fails on Floci |
+| Two writers | ✅ the second one was refused and lost nothing; Floci's Glue rejects a stale `VersionId` |
+| Schema | ✅ dbt's descriptions reach Glue; an added column needs an explicit schema change; a type change is refused |
+| Housekeeping | ✅ expiring snapshots deletes no file with PyIceberg; our cleanup brought 33 objects (480 KB) back to 4 (65 KB) |
+
+**What was built**
+- dbt builds gold as tables inside the DuckDB warehouse, and every gold test runs there: nothing reaches S3 before.
+- `scripts/publish_gold.py`, the publish step: each gold table as an Iceberg table of `sme_lake_gold`, in one commit; schema kept in line with the dbt contract (added columns added, changed types refused); dbt's descriptions as column docs; snapshots older than 7 days expired and unreferenced files older than a day deleted. It replaces `register_glue.py`.
+- `check_athena.py` reads the Iceberg tables in DuckDB with `iceberg_scan`, from the pointer in Glue.
+- The DAG: `publish_gold` instead of `register_glue`, started only if `dbt_publish` passed; PyIceberg in the Airflow image.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| Gold is published only after every test on it | ✅ `publish_gold` starts after `dbt_publish`; dbt no longer writes gold to S3 |
+| The analysis queries give the same results as before | ✅ 15, 616, 5 and 161 rows, the same first rows as in M9, through Athena and DuckDB, on tables joined from Iceberg |
+| A second publication is idempotent | ✅ from Airflow (8 tasks green in 1 min 19 s): no table created, no schema or property change, 3 snapshots kept per table |
+
+**Lessons**
+- **A lakehouse is a database taken apart.** Storage (S3), table format (Iceberg, the transaction log and row versions), catalog (Glue), engines (Athena, DuckDB, Spark): each scales and is replaced on its own, but everything a database does inside, like `VACUUM`, becomes our job. At this volume, PostgreSQL would serve gold well.
+- **Atomicity comes from the catalog, not from S3:** new files are invisible until one pointer moves, like a Git branch after its objects are written. So the catalog must refuse an out-of-date commit, and that was tested, not assumed.
+- **Never read an Iceberg table's folder:** it also holds the files of old snapshots. Readers follow the pointer.
+- **A commit can hold several snapshots:** an overwrite is a delete then an append, published together; the empty table in between was never visible.
+- **The whole lake rebuilds from the generator's files.** A `make reset` run for another test emptied S3 and Kafka; the producer, Spark and dbt rebuilt it with exactly the same counts.
+
+**Still open:** one commit per table, not one for all of gold; Athena time travel to test on AWS; partitioned gold tables to replace only the days a run touches (option 2 of M8); silver and bronze stay plain Parquet; the small DAG fix that stops logging an empty error line after each script is not checked in a run yet.
+
+**Status:** done on 2026-11-14, before the end of M11.
+
+**Next:** back to M11: a run from a fresh clone, then the spoken part.

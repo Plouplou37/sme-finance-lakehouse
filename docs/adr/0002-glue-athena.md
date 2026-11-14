@@ -1,7 +1,9 @@
 # ADR 0002: Expose the gold layer through the Glue catalog and Athena
 
-- **Status:** Accepted (M9)
+- **Status:** Accepted (M9); points 2 and 4 amended in M12
 - **Date:** 2026-11-14
+
+> **Update (M12):** the gold tables are now Iceberg tables, created and documented by `scripts/publish_gold.py` with PyIceberg, which replaces `register_glue.py` (ADR 0010). Glue holds a pointer to each table's current metadata file instead of a folder and a column list, and `check_athena.py` reads the tables in DuckDB with `iceberg_scan`. The rest of this record describes the M9 design, as decided then.
 
 ## Context
 

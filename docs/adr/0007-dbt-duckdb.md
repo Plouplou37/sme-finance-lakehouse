@@ -11,7 +11,7 @@ Athena cannot build the tables on Floci: dbt-athena creates them with `CREATE TA
 
 ## Decision
 
-1. **dbt-core 1.12.6 with dbt-duckdb 1.11.1 and DuckDB 1.5.6.** The warehouse is a single DuckDB file; DuckDB reads bronze on S3 through its httpfs extension, and silver and gold are published as Parquet on S3 (dbt-duckdb's `external` materialization), where Glue and Athena find them (ADR 0002).
+1. **dbt-core 1.12.6 with dbt-duckdb 1.11.1 and DuckDB 1.5.6.** The warehouse is a single DuckDB file; DuckDB reads bronze on S3 through its httpfs extension, and silver is published as Parquet on S3 (dbt-duckdb's `external` materialization). Gold was published the same way until M11; since M12 it stays as tables in the DuckDB file, and `scripts/publish_gold.py` publishes it as Iceberg tables in Glue once every test has passed (ADR 0010).
 2. **Layers of models:**
    - `staging`: parse the envelope once; keep one row per `event_id` (incremental: later runs read only the rows ingested since the last run, minus a 3-day margin).
    - `intermediate`: one model per event type, typed fields (amounts as `DECIMAL(18,2)`), and a single rejection reason per event.
@@ -26,7 +26,7 @@ Athena cannot build the tables on Floci: dbt-athena creates them with `CREATE TA
    - severities: blocking (`error`) when publishing would give wrong numbers, warning when a signal drifts (more than 1 % of events quarantined warns, more than 5 % blocks);
    - source freshness on bronze, every gold column described, personal-data columns marked (`meta.contains_pii`);
    - `dbt docs` for the catalogue and the lineage graph.
-6. **Write-Audit-Publish across two dbt runs, ordered by Airflow** (ADR 0008): `dbt_audit` builds and tests staging and intermediate (inside the DuckDB file, never read by users); `dbt_publish` writes silver, gold and quality only if the audit passed.
+6. **Write-Audit-Publish across two dbt runs, ordered by Airflow** (ADR 0008): `dbt_audit` builds and tests staging and intermediate (inside the DuckDB file, never read by users); `dbt_publish` writes silver and builds gold and quality only if the audit passed; since M12, `publish_gold` publishes gold only if every test of `dbt_publish` passed.
 7. **One configurable lake root** (`LAKE_ROOT`, `lake_path` macro) and a `ci` target, so the same project runs on S3 and on a local folder (ADR 0009).
 
 ## What was proven
@@ -43,8 +43,8 @@ Athena cannot build the tables on Floci: dbt-athena creates them with `CREATE TA
 ## Limits
 
 - **One machine, one writer:** DuckDB allows a single writing process, so runs are serialized (one active run in Airflow).
-- **`external` models cannot be incremental:** silver and gold are rewritten in full at each run. Fine at this size; at scale, the partitions touched by a run would be replaced (an open table format makes it possible).
-- **Write-Audit-Publish is partial:** tests on silver and gold themselves run after their files are written. A full version writes to a hidden location, then switches at once.
+- **`external` models cannot be incremental:** silver is rewritten in full at each run, and so is gold before its publication. Fine at this size; at scale, the partitions touched by a run would be replaced (Iceberg makes it possible, ADR 0010).
+- **Write-Audit-Publish is partial for silver:** tests on silver itself run after its files are written. Gold no longer has this limit since M12: it is written and tested in DuckDB, then published at once.
 - **One environment:** the same target is used by hand and by Airflow; no separate production target.
 - **Not done yet:** dbt unit tests on mocked rows, lint of the models' SQL, building only what a pull request changed (Slim CI).
 - **A multi-model test does not stop every model below it** in a single `dbt build` (only those whose ancestors include all the models it reads): found in M8, and the reason the barrier lives in the DAG.

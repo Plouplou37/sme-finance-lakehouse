@@ -1,6 +1,6 @@
 # ADR 0006: Store the lake as Parquet files on S3, in bronze, silver and gold layers
 
-- **Status:** Accepted (M1 for the bucket, M4 to M10 for the layout)
+- **Status:** Accepted (M1 for the bucket, M4 to M10 for the layout); gold amended in M12 (ADR 0010)
 - **Date:** 2026-11-08, written down on 2026-11-14
 
 ## Context
@@ -19,9 +19,9 @@ Users need different things: an audit trail of exactly what the application sent
    |---|---|---|---|
    | Bronze | every Kafka message unchanged, partitioned by `topic=` and `ingestion_date=` | Spark (ADR 0005) | never, only appended |
    | Silver | valid events, typed and deduplicated, one table per entity; the quarantine (`silver_quarantine`) with the reason of each rejection and the raw JSON | dbt | in full at each run |
-   | Gold | star schema (invoice and payment facts, customer history as SCD2, company and date dimensions) and one mart per analyst question | dbt | in full at each run |
+   | Gold | star schema (invoice and payment facts, customer history as SCD2, company and date dimensions) and one mart per analyst question | dbt (M6 to M11); since M12, built and tested in DuckDB, then published as **Iceberg** tables by `publish_gold.py` (ADR 0010) | in full at each run, as a new version committed at once |
 
-4. **One folder per table** (`<layer>/<model>/<model>.parquet`): a Hive-style table is *everything under its prefix*, so a stray file in a table folder becomes rows of that table (M0, M9).
+4. **One folder per table** (`<layer>/<model>/<model>.parquet`): a Hive-style table is *everything under its prefix*, so a stray file in a table folder becomes rows of that table (M0, M9). An Iceberg table of gold (M12) also has its own folder, with `data/` and `metadata/` inside; there, only the files listed by the current metadata count.
 5. **Paths come from one setting:** dbt builds every location from `LAKE_ROOT` (`s3://sme-lake` by default) with the `lake_path` macro, so the same models run on S3 and on a local folder in the CI (M10).
 6. **Every rewrite replaces, never appends** (silver and gold): a run can be replayed without creating duplicates.
 
@@ -36,7 +36,7 @@ Users need different things: an audit trail of exactly what the application sent
 
 ## Limits
 
-This is a **lakehouse architecture without an open table format**: open files, a catalog and SQL engines over them, but plain Parquet folders instead of Iceberg or Delta tables.
+This is a **lakehouse architecture**: open files, a catalog and SQL engines over them. Bronze and silver are plain Parquet folders; since M12, **gold is made of Iceberg tables** (ADR 0010), which removes the first three limits below for gold. They still apply to bronze and silver.
 
 - **No transactions:** a reader can see a table half rewritten; two writers can overwrite each other (one run at a time in Airflow avoids it).
 - **No row updates or deletes:** erasing one customer's personal data means rewriting the files that hold it.
@@ -56,5 +56,5 @@ This is a **lakehouse architecture without an open table format**: open files, a
 |---|---|
 | CSV or JSON files | No types, row-based: every query reads every column |
 | A data warehouse only (Snowflake, BigQuery, Redshift) | Storage and compute coupled in one paid service; not available locally |
-| Apache Iceberg | Adds transactions, updates, history and safe concurrent writes; more moving parts. Kept as an optional bonus |
+| Apache Iceberg | Adds transactions, updates, history and safe concurrent writes; more moving parts. **Adopted for gold in M12** (ADR 0010); bronze and silver stay Parquet |
 | Partitioning gold by month or company | Useful at scale to read less; at this size it would only create small files |

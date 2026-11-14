@@ -1,5 +1,3 @@
-{{ config(location=lake_path('gold', 'fct_payments')) }}
-
 -- Grain: one row per money movement on an invoice: a payment received (amount > 0) or a refund
 -- (amount < 0). Not one row per invoice: an invoice can receive several partial payments, and each
 -- one has its own date, amount and method. A fine grain can always be summed up, never split back.
