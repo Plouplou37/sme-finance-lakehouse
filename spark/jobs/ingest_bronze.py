@@ -1,8 +1,9 @@
-"""Copy the three Kafka topics into the bronze layer, unchanged (M4).
+"""Copy the three Kafka topics into the bronze layer, unchanged (M4, run through Spark Connect in M8).
 
-Run from the repository root:
-    docker compose run --rm spark                                                    # ingest
-    docker compose run --rm spark /opt/spark/bin/spark-submit /jobs/ingest_bronze.py --explain   # + plan
+Two ways to run it:
+    docker compose run --rm spark          # M4: spark-submit starts a local Spark inside the container
+    SPARK_REMOTE=sc://spark-connect:15002  # M8: a thin client (Airflow) sends the job to the Spark Connect
+    python ingest_bronze.py                #     server over the network; no Java, no Spark on the client
 
 Reads every message that arrived in Kafka since the last run (Trigger.AvailableNow), writes it to
 s3a://sme-lake/bronze/ as Parquet, then stops. The checkpoint remembers which offsets are written:
@@ -11,6 +12,9 @@ a second run with no new message writes nothing, and a run stopped halfway resum
 Bronze keeps each message exactly as received (the JSON as text, not parsed), plus its Kafka
 coordinates: a schema change in the application can never break this job, and silver can be
 rebuilt from bronze at any time.
+
+With Spark Connect, the Kafka address and the S3 paths are resolved by the SERVER (inside the Docker
+network): redpanda:9092 and s3a://... work the same in both modes.
 """
 
 import os
@@ -26,11 +30,23 @@ CHECKPOINT_PATH = "s3a://sme-lake/checkpoints/bronze"
 # At most this many messages per micro-batch: the 2,578 events are written in 3 batches,
 # which makes a stop in the middle of a run possible to observe.
 MAX_OFFSETS_PER_BATCH = 1000
+REMOTE = bool(os.environ.get("SPARK_REMOTE"))  # set: Spark Connect client; unset: classic spark-submit
+
+
+def read_progress(progress, name):
+    """One field of a micro-batch progress report. It is an object with attributes or a dict,
+    depending on the PySpark mode and version; with Spark Connect, numInputRows is only an attribute."""
+    value = getattr(progress, name, None)
+    if value is None and isinstance(progress, dict):
+        value = progress.get(name)
+    return value
 
 
 def main() -> None:
+    # With SPARK_REMOTE set, getOrCreate() connects to the Spark Connect server instead of starting Spark.
     spark = SparkSession.builder.appName("ingest_bronze").getOrCreate()
-    spark.sparkContext.setLogLevel("WARN")  # keep the output readable
+    if not REMOTE:
+        spark.sparkContext.setLogLevel("WARN")  # keep the output readable (no SparkContext with Spark Connect)
 
     kafka = (
         spark.readStream.format("kafka")
@@ -65,16 +81,12 @@ def main() -> None:
     )
     query.awaitTermination()
 
-    # One progress report per micro-batch. Depending on the PySpark version, a report is a dict
-    # or an object with attributes: read both ways.
-    def field(progress, name):
-        return progress[name] if isinstance(progress, dict) else getattr(progress, name)
-
     # Every batch is listed, even those with 0 rows, so that a replayed batch stays visible.
     batches = list(query.recentProgress)
     for progress in batches:
-        print("Batch {}: {} messages read".format(field(progress, "batchId"), field(progress, "numInputRows")))
-    total = sum(field(p, "numInputRows") for p in batches)
+        rows = read_progress(progress, "numInputRows")
+        print("Batch {}: {} messages read".format(read_progress(progress, "batchId"), rows))
+    total = sum(read_progress(p, "numInputRows") or 0 for p in batches)
     print("Done: {} messages in {} batches".format(total, len(batches)))
 
     if "--explain" in sys.argv:

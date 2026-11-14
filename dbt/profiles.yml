@@ -6,8 +6,8 @@ sme_lake:
     dev:
       type: duckdb
       # The warehouse is a single DuckDB file, relative to the folder dbt is run from (the repository root).
-      # data/ is ignored by Git.
-      path: data/warehouse.duckdb
+      # data/ is ignored by Git. Airflow sets DBT_DUCKDB_PATH to keep its own warehouse in a Docker volume.
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'data/warehouse.duckdb') }}"
       threads: 2
       settings:
         # Show and convert timestamps in UTC, like the event contract, whatever the machine's time zone.

@@ -332,3 +332,51 @@
 **Status:** M7 closed on 2026-11-11, merged through the module's pull request.
 
 **Next:** M8, orchestration with Airflow.
+
+## M8: orchestration with Airflow (2026-11-11 to 2026-11-14)
+
+**Goal:** run the whole pipeline every day, with retries, replays and alerts, and prove each of them.
+
+**Decisions**
+- **No Docker socket.** The default plan was a `DockerOperator` starting one container per task, which gives Airflow the Docker socket, that is root on the host. Instead, the computing stays outside Airflow and is reached over the network: Spark runs as a **Spark Connect** server (`spark-connect` service) and the task sends it the ingestion job through a thin client (`pyspark-client`, no Java); dbt and DuckDB are installed in our Airflow image, each in its own virtual environment. Tasks are plain `BashOperator`s.
+- **Airflow 3.3.2 with the LocalExecutor:** the scheduler runs the tasks itself, as processes. The official Compose file (Celery, Redis, workers) was cut down to Postgres, a one-shot `airflow-init`, the api-server, the scheduler and the dag-processor, in a `pipeline` profile.
+- **Each run processes the whole dataset** (option 1). Every task is idempotent, so a run can be replayed at will, and any run repairs the whole history. The logical date of a run only names its report. Processing one day per run (option 2) is the target at a larger scale, see *Still open*.
+- **Write-Audit-Publish in two dbt tasks.** `dbt_audit` builds staging and intermediate (tables in the DuckDB file, never read by users) and runs their tests, including the blocking share of quarantined events; `dbt_publish` builds silver, gold and quality (the Parquet files on S3) only if the audit passed. Why two tasks and not one `dbt build`: see the lessons.
+
+**What was built**
+- The `sme_lake_pipeline` DAG, daily, `catchup=False`, one run at a time (DuckDB has a single writer, Spark a single checkpoint): `check_sources` (Floci, Kafka, Spark Connect reachable, manifest present) → `ingest_bronze` (Kafka to bronze through Spark Connect) → `dbt_audit` → `dbt_publish` → `publish_catalog` (`dbt docs generate` into `data/catalog/`) → `run_report`.
+- Two retries 30 s apart for transient failures; none for the dbt tasks, since a failed test fails again the same way.
+- Alerts: every failed attempt appends one JSON line to `data/alerts/alerts.log` (a local stand-in for a chat or paging webhook), with the task, the run, the attempt, a level (`retry`: Airflow will try again; `failure`: the run stops) and the cause. For the dbt tasks, the cause names the failed models or tests, read from dbt's `run_results.json`.
+- The end-of-run report, `data/reports/<date>__<run>.md`: duration, dbt results of both passes, warnings by name, rows processed per entity (valid and quarantined) and the reconciliation with the generator's manifest.
+- `make pipeline`: the lake (`make up`), then Airflow and Spark Connect. `make down` and `make reset` now stop every profile.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| The DAG runs end to end | ✅ 6 tasks, about 30 s per run once the services are warm |
+| Replaying a date creates no duplicates | ✅ a run cleared and run again (attempt 2) gave the same report; the 3 backfilled runs and today's run give the same counts (2,578 bronze rows, 2,519 distinct events) |
+| A provoked outage (Kafka stopped) is retried, then resolved | ✅ Redpanda stopped, run triggered: `check_sources` failed with `redpanda:9092 unreachable`, a `retry` alert was written, Redpanda was restarted and the next attempt passed |
+| A blocking quality test stops the flow before publication | ✅ threshold lowered to 0.5 %: `dbt_audit` failed, `dbt_publish` never started, and every silver and gold file on S3 kept the time of the previous run (09:17, the failed run started at 09:28). The first attempt, with a single `dbt build`, failed this criterion (see the lessons) |
+| A backfill over 3 past days works | ✅ 2026-11-08 to 2026-11-10 from the UI: three runs, one after the other, all green, same counts |
+| An outage and a blocking test each trigger an alert naming the task and the cause | ✅ `check_sources`: `redpanda:9092 unreachable (...)`; `dbt_audit`: `quarantine_share_error (fail); publication blocked: silver and gold not rewritten` |
+| A report is produced on every successful run | ✅ one per run, including the scheduled and backfilled ones |
+
+**Lessons**
+- **A test that reads several models does not stop everything below it.** With one `dbt build`, the blocking test on the share of quarantined events (it reads the three intermediate models) failed, yet `dim_customer` and `dim_company` were published again: dbt only skips a model if its ancestors include every model the failed test reads, and these two only descend from customers and invoices. The M7 comment on that test claimed the opposite and was corrected. The barrier now lives in the DAG, where it can be seen.
+- **The barrier only covers what is tested before writing.** Tests on silver and gold themselves (uniqueness, reconciliation with silver) run after their files are written. A complete Write-Audit-Publish writes to a hidden location and switches at once (for example, Iceberg branches).
+- **Airflow passes the date; the task decides what to do with it.** Here the tasks ignore it, so the backfill proves the mechanism (past runs, created and run one by one, without duplicates) but not the reprocessing of one specific day.
+- **`catchup=False` was visible:** with the DAG starting on 2026-11-01 but enabled on the 11th, only the latest date got a run; Airflow was off on the 13th, so that day was skipped and only the 14th ran at restart.
+- **Startup order matters in Airflow 3:** every task asks the api-server for permission to start. The scheduler, started first, launched the midnight run while the api-server was still booting; the call timed out, the task was killed, and the alert said `"cause": "None"` (no Python exception). The scheduler now waits for a healthy api-server, and an alert without an exception says so.
+- **Containers and volumes:** a new named volume copies the owner of the folder it is mounted on, so the warehouse folder must exist in the image, owned by `airflow` (otherwise `Permission denied` for DuckDB); task logs need a volume shared between the scheduler and the api-server to be readable in the UI; `dbt docs generate` rewrites `run_results.json`, so it writes elsewhere; a run triggered from the command line has no logical date in Airflow 3, so `{{ ds }}` does not exist.
+- **Not every alert should wake someone up.** A `retry` that resolves itself is information for the morning; a `failure` or a blocked publication needs a human before users expect the data. Warnings belong in the report.
+
+**Still open**
+- **One day per run (option 2).** Event tables incremental by date partition with a window for late events; state tables (invoices, SCD2 customers) merged on their key for the entities touched that day; backfill to repair given days, in order when a state depends on the day before. It needs a producer that publishes day by day, and a way to replace one partition on S3 (dbt-duckdb `external` models cannot be incremental; Iceberg could).
+- **dbt runs inside the scheduler container** (LocalExecutor, DuckDB embedded): fine at this volume, but a heavy model would compete with scheduling. At scale: dbt against a warehouse, or one container per task.
+- **No alert when the data is not ready on time** (SLA), and alerts go to a file, not to a pager or a chat.
+- **Image hygiene:** Docker Scout reports known vulnerabilities in the Airflow base image (not triaged); the Python dependencies of the image are not locked; the example JWT secret is shorter than the recommended 64 bytes (warning in the logs).
+
+**Status:** M8 closed on 2026-11-14.
+
+**Next:** M9, the gold tables in the Glue Data Catalog, queried through Athena.
