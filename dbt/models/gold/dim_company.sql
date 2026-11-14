@@ -15,6 +15,6 @@ with company_events as (
 select
     {{ surrogate_key(['company_id']) }} as company_key,
     company_id,
-    min(event_time) as first_seen_at
+    cast(min(event_time) as date) as first_seen_at  -- DELIBERATE BUG (M10): breaks the gold contract, must be blocked
 from company_events
 group by company_id
