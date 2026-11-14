@@ -71,6 +71,7 @@ Installed by `airflow/Dockerfile`, each tool in its own virtual environment, so 
 | dbt-core, dbt-duckdb, duckdb | `1.12.6`, `1.11.1`, `1.5.6` | The same versions as on the host, so a model behaves the same in Airflow and by hand |
 | pyspark-client | `4.2.0` | Thin Spark Connect client (no Java): must match the Spark server. Released 2026-07-14; 4.2.1 was under 14 days old |
 | pandas | `<3` | Needed by the Spark client, which warns that it does not fully support pandas 3 yet (seen in the M8 spike) |
+| boto3 (in dbt's environment) | `1.43.126` | M9: the Glue and Athena scripts run there, next to DuckDB. The version locked on the host |
 
 ## Not pinned
 

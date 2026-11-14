@@ -302,7 +302,7 @@
 
 **What was built**
 - Enforced model contracts on the 9 gold tables: column names and types are checked before building. The contracts forced every type to be explicit (a sum of `DECIMAL(18,2)` defaults to `DECIMAL(38,2)`).
-- Every gold column described (105), and the 5 columns holding personal data marked with `meta.contains_pii`.
+- Every gold column described (90; first written as 105 by mistake, corrected in M9 when Glue counted them), and the 5 columns holding personal data marked with `meta.contains_pii`.
 - The generator's manifest read as a dbt source, and `quality_reconciliation` (one row per check, kept in the warehouse for the M8 run report) comparing it with what the platform found.
 - Severities: `quality_matches_manifest` and `quarantine_share_error` (more than 5 % quarantined) block the run; `quarantine_share_warn` (more than 1 %) only warns.
 - Source freshness on bronze (warning after one day without ingestion, error after three).
@@ -316,7 +316,7 @@
 | Detected anomalies match the manifest, type by type | ✅ total events 2,578, duplicates 59, non-positive amounts 7, unknown currencies 11, unknown references 10, overpayments 2: all `match`, as a blocking test |
 | A type change deliberately breaks a contract, then the fix is shown | ✅ `first_seen_at` cast to a date: dbt stopped with the mismatch table, the tests were skipped, and the published Parquet kept the time of the last good build |
 | Source freshness is tested | ✅ `dbt source freshness`: pass |
-| Every gold column is described, sensitive columns are marked | ✅ 105 columns, 5 marked as personal data |
+| Every gold column is described, sensitive columns are marked | ✅ 90 columns, 5 marked as personal data |
 | `dbt docs` shows the full graph | ✅ lineage from `bronze.events` to the four marts |
 
 `dbt build`: 19 models and 54 tests, 72 pass and 1 warning (1.19 % of events in quarantine, above the 1 % alert threshold, below the 5 % blocking one).
@@ -377,6 +377,39 @@
 - **No alert when the data is not ready on time** (SLA), and alerts go to a file, not to a pager or a chat.
 - **Image hygiene:** Docker Scout reports known vulnerabilities in the Airflow base image (not triaged); the Python dependencies of the image are not locked; the example JWT secret is shorter than the recommended 64 bytes (warning in the logs).
 
-**Status:** M8 closed on 2026-11-14.
+**Status:** M8 closed on 2026-11-14, merged through the module's pull request.
 
 **Next:** M9, the gold tables in the Glue Data Catalog, queried through Athena.
+
+## M9: Glue and Athena (2026-11-14)
+
+**Goal:** expose gold as on AWS: analysts query tables by name through a catalog, not file paths.
+
+**What was built** (decisions and limits in [ADR 0002](adr/0002-glue-athena.md))
+- **One S3 folder per table**, in silver and gold (`s3://sme-lake/gold/<model>/<model>.parquet`): a Hive-style Glue table is everything under its prefix, so nine files side by side in `gold/` could not become nine tables. The old flat files were removed (listed with `--dryrun` first).
+- `scripts/register_glue.py`: the database `sme_lake_gold` and one table per gold model, built from dbt's manifest: location, contract types translated to Glue types, descriptions, and a `contains_pii` parameter on personal-data columns. Creates or updates; checks the column count of every table against dbt.
+- `analytics/`: four queries, one per analyst question, on the facts and dimensions, in SQL common to Trino and DuckDB.
+- `scripts/check_athena.py`: runs each query through Athena (asynchronous: start, poll, read) and through DuckDB on the folders Glue points to, and compares the results row by row.
+- Two DAG tasks, `register_glue` and `check_athena`, between the dbt catalogue and the report. They run the scripts and fail with the script's own last message, so an alert gives the reason and not only an exit code.
+
+**Success criteria**
+
+| Criterion | Result |
+|---|---|
+| The gold tables are registered in Glue | ✅ 9 tables, 90 columns, 5 marked as personal data; created from the host, updated by Airflow |
+| The four queries pass through Athena on Floci and give the same results as DuckDB | ✅ 15, 616, 5 and 161 rows, identical; about 1.2 s per Athena query; in the daily DAG too (8 tasks green) |
+| Every limit found is written in `docs/adr/` | ✅ [ADR 0002](adr/0002-glue-athena.md) |
+
+**Lessons**
+- **A table is a name and a schema on a folder.** The layout of the lake had to change before the catalog could exist: one folder per table, nothing else under it (the Athena results go to their own prefix).
+- **One source of truth.** The contracts and descriptions written in dbt (M7) become the Glue schema and its documentation; nothing is typed twice.
+- **On Floci, Athena vs DuckDB is DuckDB vs DuckDB.** The comparison proves the chain (catalog, locations, files, API), not Trino compatibility: the SQL avoids DuckDB shortcuts (`date_diff` instead of `date - date`, `interval '90' day` instead of `- 90`), but was never run on Trino.
+- **Trigger every guard once.** A temporary query in DuckDB-only syntax came back `SUCCEEDED` with no result, and the check refused it, as planned after M0.
+- **Survivorship bias in a KPI:** the average delay to settle (32.3 days for one company) only counts invoices already settled, so it hides the slow ones; the DSO (50.8 days) counts everything still outstanding.
+- The M7 entry said 105 gold columns; Glue counted 90, which was already true in M7. Corrected above.
+
+**Still open:** the SQL on a real Athena (Trino); whether Floci keeps the Glue column types, comments and parameters (not checked); removing from Glue the tables deleted from dbt; partitions (not needed at this size); access rights on personal-data columns (Lake Formation on AWS).
+
+**Status:** M9 closed on 2026-11-14.
+
+**Next:** M10, continuous integration with GitHub Actions.
