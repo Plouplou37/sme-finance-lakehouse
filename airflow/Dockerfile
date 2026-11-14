@@ -15,6 +15,11 @@ RUN python -m venv /home/airflow/dbt-venv \
  && /home/airflow/spark-client-venv/bin/pip install --no-cache-dir \
         "pyspark-client==4.2.0" "pandas<3"
 
+# boto3 (the version locked on the host) for the M9 scripts, which run in dbt's environment because it has
+# DuckDB: register the gold tables in Glue, then compare Athena with DuckDB. A separate layer, so adding it
+# does not reinstall dbt.
+RUN /home/airflow/dbt-venv/bin/pip install --no-cache-dir "boto3==1.43.126"
+
 # The folder of the airflow-warehouse volume must exist in the image, owned by the airflow user: a new named
 # volume copies the owner of the folder it is mounted on. Without it, the volume belongs to root and dbt
 # cannot create its DuckDB file ("Permission denied", seen on the first M8 run).

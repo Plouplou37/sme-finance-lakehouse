@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/mart_monthly_revenue.parquet') }}
+{{ config(location='s3://sme-lake/gold/mart_monthly_revenue/mart_monthly_revenue.parquet') }}
 
 -- Question 1: what is the monthly revenue of each company?
 -- Grain: one row per company and per month of issue.

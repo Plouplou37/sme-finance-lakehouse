@@ -37,6 +37,8 @@ models:
     gold:
       # The star schema for analysts (M6): facts, dimensions and marts, published as Parquet to
       # s3://sme-lake/gold/ (location set in each model), for Glue and Athena in M9.
+      # One folder per table, in silver and gold (s3://sme-lake/gold/<model>/<model>.parquet): for Glue and
+      # Athena, a table is EVERYTHING under its prefix, so tables sharing a folder would be read mixed (M0).
       +materialized: external
       +schema: gold
     quality:

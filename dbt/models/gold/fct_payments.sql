@@ -1,4 +1,4 @@
-{{ config(location='s3://sme-lake/gold/fct_payments.parquet') }}
+{{ config(location='s3://sme-lake/gold/fct_payments/fct_payments.parquet') }}
 
 -- Grain: one row per money movement on an invoice: a payment received (amount > 0) or a refund
 -- (amount < 0). Not one row per invoice: an invoice can receive several partial payments, and each

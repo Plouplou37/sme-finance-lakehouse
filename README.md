@@ -45,7 +45,8 @@ whose broker did not survive restarts. See [ADR 0001](docs/adr/0001-floci.md).
 s3://sme-lake/
 ├── bronze/        raw events from Kafka, unchanged (topic=<topic>/ingestion_date=<date>/)
 ├── silver/        cleaned, typed and deduplicated data, and the quarantine (Parquet, written by dbt)
-├── gold/          star schema and marts for analysts (Parquet, written by dbt)
+├── gold/          star schema and marts for analysts (Parquet, written by dbt, one folder per table)
+├── athena-results/  query results written by Athena, kept out of the table folders
 ├── quarantine/    rejected events, with the reason
 ├── checkpoints/   Spark streaming progress
 └── bench/         benchmark data (bonus)
@@ -168,7 +169,8 @@ takes a few minutes, and the interface answers about a minute after the start. T
 runs every day:
 
 ```text
-check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog -> run_report
+check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog
+              -> register_glue -> check_athena -> run_report
 ```
 
 - `ingest_bronze` sends the Spark job to the Spark Connect server; Airflow only orchestrates.
@@ -180,6 +182,21 @@ check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog ->
   `data/reports/`, and the dbt catalogue is written to `data/catalog/`.
 - To see the blocking test stop the publication, trigger the DAG with `quarantine_error_share` set
   to `0.005` (0.5 % of events quarantined instead of 5 %).
+
+### Query gold through Glue and Athena
+
+```sh
+uv run --env-file .env python scripts/register_glue.py   # gold tables in the Glue catalog, from dbt's manifest
+uv run --env-file .env python scripts/check_athena.py    # the analysis queries through Athena and DuckDB, compared
+```
+
+The DAG runs both after each build; by hand, run dbt (or the DAG) first. `register_glue.py` reads
+dbt's manifest (`data/catalog/manifest.json`, written by the DAG; pass `--manifest dbt/target/manifest.json`
+after a dbt run by hand) and registers each gold model as a table of the `sme_lake_gold` database, with
+its column types, descriptions and personal-data marks. The four queries of [analytics/](analytics/)
+answer the analyst questions above on the facts and dimensions, in SQL common to Athena (Trino) and
+DuckDB. On Floci, Athena runs DuckDB: the comparison checks the catalog chain, not Trino itself.
+See [ADR 0002](docs/adr/0002-glue-athena.md).
 
 ### Endpoints
 
@@ -202,7 +219,7 @@ check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog ->
 - [x] **M6 — dbt gold**: star schema (invoice and payment facts, customer history as SCD2) and marts for monthly revenue, unpaid invoices, DSO (days sales outstanding) and late payers; gold reconciled with silver to the cent.
 - [x] **M7 — Data quality**: enforced contracts on gold, reconciliation with the generator's manifest type by type, blocking and warning tests, source freshness, documented columns with personal data marked, dbt docs.
 - [x] **M8 — Airflow**: daily DAG from Kafka to gold, with Spark sent to a Spark Connect server (no Docker socket); retries, replays and a 3-day backfill without duplicates; a blocking test that stops the publication (write, audit, publish); alerts naming the task and the cause; a report on every run.
-- [ ] **M9 — Glue and Athena**: gold tables registered in the catalog and queried through Athena.
+- [x] **M9 — Glue and Athena**: gold tables registered in the Glue catalog from dbt's manifest (types, descriptions, personal data marked); four analysis queries through Athena, checked against DuckDB in the daily DAG. See [ADR 0002](docs/adr/0002-glue-athena.md).
 - [ ] **M10 — CI**: GitHub Actions runs lint, pytest and `dbt build` on a sample for each pull request.
 - [ ] **M11 — Documentation**: one ADR per main technology, measured results and known limits.
 
