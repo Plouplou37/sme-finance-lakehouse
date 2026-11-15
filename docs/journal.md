@@ -446,9 +446,15 @@
 
 **Next:** M11, documentation and the project told end to end.
 
-## M11 (first part): documentation (2026-11-14)
+## M11: documentation (2026-11-14 to 2026-11-15)
 
-One decision record per main technology (ADRs 0003 to 0009: Docker Compose, Kafka with Redpanda, Spark, S3 and Parquet, dbt with DuckDB, Airflow, GitHub Actions), each with what was proven, its limits and when not to use it; the README rewritten around the problem, the architecture, measured results and limits; `CLAUDE.md`, the working rules for AI coding agents in this repository. The rest of M11 comes after M12.
+One decision record per main technology (ADRs 0003 to 0009: Docker Compose, Kafka with Redpanda, Spark, S3 and Parquet, dbt with DuckDB, Airflow, GitHub Actions; ADR 0010 for Iceberg came with M12), each with what was proven, its limits and when not to use it; the README rewritten around the problem, the architecture, measured results and limits; `CLAUDE.md`, the working rules for AI coding agents in this repository.
+
+**Found while preparing a run from a fresh clone:** the README said to trigger the DAG, but new DAGs start paused in this setup; it now says to switch the DAG on first.
+
+**Still open:** a full run from a fresh clone, following only the README, was started but not completed.
+
+**Status:** M11 closed on 2026-11-15.
 
 ## M12: Apache Iceberg for gold (2026-11-14)
 
@@ -492,4 +498,4 @@ One decision record per main technology (ADRs 0003 to 0009: Docker Compose, Kafk
 
 **Status:** done on 2026-11-14, before the end of M11.
 
-**Next:** back to M11: a run from a fresh clone, then the spoken part.
+**Next:** optional bonuses, starting with Spark transformations compared with dbt; a full run from a fresh clone.
