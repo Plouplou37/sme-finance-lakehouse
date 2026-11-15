@@ -138,8 +138,9 @@ uv run --env-file .env python -m producer     # publish them to Kafka (once per 
 make pipeline                                 # Airflow and Spark Connect (about 5 GB more memory for Docker)
 ```
 
-Open Airflow on http://localhost:8088 (`admin` / `admin` by default, set in `.env`) and trigger the
-`sme_lake_pipeline` DAG. The first build of the Airflow image takes a few minutes.
+Open Airflow on http://localhost:8088 (`admin` / `admin` by default, set in `.env`), switch the
+`sme_lake_pipeline` DAG on (new DAGs start paused): Airflow then runs it for the latest date, and
+**Trigger** starts another run at any time. The first build of the Airflow image takes a few minutes.
 
 ```text
 check_sources -> ingest_bronze -> dbt_audit -> dbt_publish -> publish_catalog
@@ -226,7 +227,7 @@ s3://sme-lake/
 - [x] **M8 — Airflow**: daily DAG with retries, replays, a backfill, a publication barrier, alerts and a report per run.
 - [x] **M9 — Glue and Athena**: gold registered in Glue from dbt's manifest; the analyst queries checked through Athena against DuckDB.
 - [x] **M10 — CI**: GitHub Actions on every pull request, with no service; `main` only accepts green pull requests.
-- [ ] **M11 — Documentation**: one ADR per main technology, this README.
+- [x] **M11 — Documentation**: one decision record per main technology, Iceberg included (ADRs 0001 to 0010), this README and `CLAUDE.md`.
 - [x] **M12 — Iceberg**: gold published as Iceberg tables in Glue with PyIceberg, after every dbt test; atomic commits, concurrent writers and schema changes tested on Floci first (`spikes/m12/`).
 
 ## Documentation
